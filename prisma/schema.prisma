@@ -1,0 +1,22 @@
+generator client {
+	provider = "prisma-client-js"
+}
+
+datasource db {
+	provider = "sqlite"
+	url      = env("DATABASE_URL")
+}
+
+model Analysis {
+	id        String  @id @default(cuid())
+	createdAt DateTime @default(now())
+	pgn       String
+	depth     Int
+	ply       Int
+	// Stored as JSON strings to keep schema simple for MVP
+	sans      String   // JSON string: string[]
+	fens      String   // JSON string: string[]
+	series    String   // JSON string: number[] (centipawns per ply)
+}
+
+

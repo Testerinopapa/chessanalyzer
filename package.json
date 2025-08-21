@@ -9,9 +9,11 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@prisma/client": "^6.14.0",
     "chessops": "^0.14.2",
     "next": "15.5.0",
     "pino": "^9.9.0",
+    "prisma": "^6.14.0",
     "react": "19.1.0",
     "react-chessboard": "^5.5.0",
     "react-dom": "19.1.0"
