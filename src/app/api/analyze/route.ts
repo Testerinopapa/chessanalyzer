@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { spawn, execFileSync } from "child_process";
+import { spawn } from "child_process";
+import fs from "fs";
 import { logger } from "@/lib/logger";
 
 type AnalyzeRequest = {
 	fen: string;
 	depth?: number;
+	elo?: number;
+	limitStrength?: boolean;
 };
 
 type EngineInfo = {
@@ -49,36 +52,43 @@ function parseInfoLine(line: string): EngineInfo | null {
 	return info;
 }
 
+function isExecutable(p: string): boolean {
+	try { fs.accessSync(p, fs.constants.X_OK); return true; } catch { return false; }
+}
+
 function findStockfishBinary(): string | null {
 	// Allow explicit override via env
 	const envPath = process.env.STOCKFISH_PATH;
-	if (envPath) {
-		try {
-			execFileSync(envPath, ["uci"], { timeout: 1000 });
-			return envPath;
-		} catch {}
-	}
+	if (envPath && isExecutable(envPath)) return envPath;
 	// Common locations; in Docker we'll add /usr/bin/stockfish
 	const candidates = [
 		"/usr/bin/stockfish",
 		"/usr/local/bin/stockfish",
 		"/usr/games/stockfish",
-		"stockfish",
 	];
-	for (const candidate of candidates) {
-		try {
-			execFileSync(candidate, ["uci"], { timeout: 1000 });
-			return candidate;
-		} catch {}
+	for (const c of candidates) {
+		if (fs.existsSync(c) && isExecutable(c)) return c;
 	}
-	return null;
+	// Fallback to PATH name
+	return "stockfish";
 }
 
 export async function POST(req: NextRequest) {
-	const body = (await req.json()) as AnalyzeRequest;
-	const { fen, depth = 12 } = body;
+	let body: AnalyzeRequest | undefined;
+	try {
+		body = (await req.json()) as AnalyzeRequest;
+	} catch {
+		body = undefined;
+	}
+	let fen = body?.fen;
+	const depth = body?.depth ?? 12;
+	const elo = typeof body?.elo === "number" ? Math.max(1350, Math.min(2850, Math.floor(body!.elo))) : undefined;
+	const limitStrength = body?.limitStrength ?? (elo !== undefined);
 	if (!fen || typeof fen !== "string") {
 		return NextResponse.json({ error: "Missing fen" }, { status: 400 });
+	}
+	if (fen === "startpos") {
+		fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 	}
 
 	const bin = findStockfishBinary();
@@ -86,10 +96,12 @@ export async function POST(req: NextRequest) {
 		return NextResponse.json({ error: "Stockfish binary not found on server" }, { status: 503 });
 	}
 
-	logger.info({ fen, depth }, "analysis:start");
+	const reqId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+	logger.info({ reqId, fen, depth }, "analysis:start");
 
 	return new Promise<NextResponse>((resolve) => {
 		const engine = spawn(bin);
+		logger.debug({ reqId, bin, pid: engine.pid }, "stockfish:spawned");
 		let bestmove: string | null = null;
 		const infoLines: string[] = [];
 		let bestInfo: EngineInfo | null = null;
@@ -99,7 +111,41 @@ export async function POST(req: NextRequest) {
 				engine.stdin.write("quit\n");
 				engine.kill();
 			} catch {}
-		}, Math.max(3, Math.min(depth * 1000, 15000)));
+		}, Math.max(5, Math.min(depth * 1000, 20000)));
+
+		engine.on("error", (err) => {
+			logger.error({ err: String(err) }, "stockfish:spawn_error");
+			clearTimeout(stopTimer);
+			resolve(NextResponse.json({ error: "Failed to start Stockfish" }, { status: 503 }));
+		});
+
+		let sawUciOk = false;
+		let sawReadyOk = false;
+		let sentIsReady = false;
+		const waitForReady: Promise<boolean> = new Promise((resolveReady) => {
+			const readyTimeout = setTimeout(() => {
+				logger.warn({ reqId }, "stockfish:ready_timeout");
+				resolveReady(false);
+			}, 8000);
+			engine.stdout.on("data", (chunk: Buffer) => {
+				const text = chunk.toString("utf8");
+				for (const line of text.split(/\r?\n/)) {
+					if (!line) continue;
+					if (line === "uciok") {
+						sawUciOk = true;
+						if (!sentIsReady) {
+							try { engine.stdin.write("isready\n"); sentIsReady = true; } catch {}
+						}
+					}
+					if (line === "readyok") sawReadyOk = true;
+					if (sawUciOk && sawReadyOk) {
+						clearTimeout(readyTimeout);
+						logger.debug({ reqId }, "stockfish:ready_ok");
+						return resolveReady(true);
+					}
+				}
+			});
+		});
 
 		engine.stdout.on("data", (chunk: Buffer) => {
 			const text = chunk.toString("utf8");
@@ -123,19 +169,37 @@ export async function POST(req: NextRequest) {
 		});
 
 		engine.stderr.on("data", (chunk: Buffer) => {
-			logger.warn({ err: chunk.toString("utf8") }, "stockfish:stderr");
+			logger.warn({ reqId, err: chunk.toString("utf8") }, "stockfish:stderr");
 		});
 
-		engine.on("close", () => {
-			logger.info({ bestmove, info: bestInfo }, "analysis:done");
-			resolve(NextResponse.json({ bestmove, info: bestInfo ?? null, raw: infoLines.slice(-10) }));
+
+		engine.on("close", (code, signal) => {
+			logger.info({ reqId, code, signal, bestmove, info: bestInfo }, "analysis:done");
+			resolve(NextResponse.json({ reqId, bestmove, info: bestInfo ?? null, raw: infoLines.slice(-10) }));
 		});
 
-		// UCI protocol
+		// UCI protocol: send uci first; wait for uciok -> send isready
 		engine.stdin.write("uci\n");
-		engine.stdin.write("isready\n");
-		engine.stdin.write(`position fen ${fen}\n`);
-		engine.stdin.write(`go depth ${depth}\n`);
+		waitForReady.then((ok) => {
+			if (!ok) {
+				clearTimeout(stopTimer);
+				logger.error({ reqId }, "stockfish:not_ready");
+				return resolve(NextResponse.json({ error: "Stockfish not ready" }, { status: 503 }));
+			}
+			try {
+				logger.debug({ reqId, fen, depth }, "stockfish:go");
+				if (limitStrength) {
+					engine.stdin.write(`setoption name UCI_LimitStrength value true\n`);
+					if (elo !== undefined) engine.stdin.write(`setoption name UCI_Elo value ${elo}\n`);
+				}
+				engine.stdin.write(`position fen ${fen}\n`);
+				engine.stdin.write(`go depth ${depth}\n`);
+			} catch (err) {
+				logger.error({ reqId, err: String(err) }, "stockfish:write_error");
+				clearTimeout(stopTimer);
+				return resolve(NextResponse.json({ error: "Stockfish write failed" }, { status: 503 }));
+			}
+		});
 		// Stop after a reasonable timeout to avoid runaway processes
 
 	});

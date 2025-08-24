@@ -4,6 +4,10 @@ import dynamic from "next/dynamic";
 import { parseFen, makeFen } from "chessops/fen";
 import { parsePgn, startingPosition } from "chessops/pgn";
 import { parseSan } from "chessops/san";
+import { defaultPosition, setupPosition } from "chessops/variant";
+import { parseSquare, parseUci, squareFile, squareRank } from "chessops/util";
+import type { Move, NormalMove, Role } from "chessops";
+import { FILE_NAMES, RANK_NAMES } from "chessops";
 import { useRouter, useSearchParams } from "next/navigation";
 
 const Chessboard = dynamic(() => import("react-chessboard").then(m => m.Chessboard), { ssr: false });
@@ -27,6 +31,15 @@ function HomeInner() {
   const [saving, setSaving] = useState(false);
   type HistoryItem = { id: string; createdAt: string; pgn: string; depth: number; ply: number; fens: string; sans: string; series: string };
   const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [playMode, setPlayMode] = useState<"off"|"engine"|"hotseat">("off");
+  const [playerColor, setPlayerColor] = useState<"white"|"black">("white");
+  const [thinking, setThinking] = useState(false);
+  const [playHistory, setPlayHistory] = useState<string[]>([]);
+  const [pendingPromotion, setPendingPromotion] = useState<{ from: string; to: string } | null>(null);
+  const [difficulty, setDifficulty] = useState<"easy"|"medium"|"hard"|"custom">("custom");
+  const [elo, setElo] = useState<number | null>(null);
+  const [engineOk, setEngineOk] = useState<boolean | null>(null);
+  const [engineReqId, setEngineReqId] = useState<string | null>(null);
 
   const handleAnalyzeServer = useCallback(async () => {
     setLoading(true);
@@ -140,6 +153,17 @@ function HomeInner() {
     }
   }, [pgn, handleParsePgn]);
 
+  const testEngine = useCallback(async () => {
+    try {
+      const res = await fetch('/api/health/engine');
+      const j = await res.json();
+      setEngineOk(!!j.ok && res.ok);
+      setEngineReqId(j.reqId ?? null);
+    } catch {
+      setEngineOk(false);
+    }
+  }, []);
+
   const loadHistory = useCallback(async () => {
     try {
       const res = await fetch('/api/analyses');
@@ -161,12 +185,217 @@ function HomeInner() {
     }
   }, [pgn, moves, series, depth, ply, loadHistory]);
 
+  // --- Player mode helpers ---
+  const startFen = useMemo(() => makeFen(defaultPosition("chess").toSetup()), []);
+
+  const currentTurn = useMemo<"white"|"black">(() => {
+    try {
+      const setupRes = fen === "startpos" ? parseFen(startFen) : parseFen(fen);
+      if (setupRes.isOk) return setupRes.unwrap().turn as "white"|"black";
+    } catch {}
+    return "white";
+  }, [fen, startFen]);
+
+  const squareToName = useCallback((sq: number) => {
+    try {
+      return `${FILE_NAMES[squareFile(sq)]}${RANK_NAMES[squareRank(sq)]}`;
+    } catch { return ""; }
+  }, []);
+
+  const positionStatus = useMemo(() => {
+    try {
+      const pos = ((): any => {
+        const setupRes = fen === "startpos" ? parseFen(startFen) : parseFen(fen);
+        if (setupRes.isErr) return null;
+        const res = setupPosition("chess", setupRes.unwrap());
+        if (res.isErr) return null;
+        return res.unwrap();
+      })();
+      if (!pos) return { inCheck: false, checkedSquare: null as string | null, gameOver: false, outcomeText: null as string | null };
+      const ctx = pos.ctx();
+      const inCheck = pos.isCheck();
+      const checkedSquare = inCheck && ctx.king !== undefined ? squareToName(ctx.king) : null;
+      const gameOver = pos.isEnd(ctx);
+      let outcomeText: string | null = null;
+      if (gameOver) {
+        const oc = pos.outcome(ctx);
+        if (oc?.winner === "white") outcomeText = "Checkmate - White wins";
+        else if (oc?.winner === "black") outcomeText = "Checkmate - Black wins";
+        else outcomeText = "Draw";
+      }
+      return { inCheck, checkedSquare, gameOver, outcomeText };
+    } catch {
+      return { inCheck: false, checkedSquare: null as string | null, gameOver: false, outcomeText: null as string | null };
+    }
+  }, [fen, startFen, squareToName]);
+
+  const squareStyles = useMemo<Record<string, React.CSSProperties>>(() => {
+    if (!positionStatus.checkedSquare) return {};
+    return {
+      [positionStatus.checkedSquare]: {
+        boxShadow: "inset 0 0 0 3px rgba(220,38,38,.9)",
+        backgroundColor: "rgba(220,38,38,.15)",
+      },
+    };
+  }, [positionStatus.checkedSquare]);
+
+  const buildPosition = useCallback(() => {
+    const setupRes = fen === "startpos" ? parseFen(startFen) : parseFen(fen);
+    if (setupRes.isErr) throw new Error("Invalid FEN");
+    const setup = setupRes.unwrap();
+    const res = setupPosition("chess", setup);
+    if (res.isErr) throw new Error("Invalid position");
+    return res.unwrap();
+  }, [fen, startFen]);
+
+  const applyMoveUci = useCallback((fenStr: string, uci: string): string | null => {
+    try {
+      const setupRes = fenStr === "startpos" ? parseFen(startFen) : parseFen(fenStr);
+      if (setupRes.isErr) return null;
+      const setup = setupRes.unwrap();
+      const res = setupPosition("chess", setup);
+      if (res.isErr) return null;
+      const pos = res.unwrap();
+      const mv = parseUci(uci) as Move | undefined;
+      if (!mv || !pos.isLegal(mv)) return null;
+      pos.play(mv);
+      return makeFen(pos.toSetup());
+    } catch {
+      return null;
+    }
+  }, [startFen]);
+
+  const engineReply = useCallback(async () => {
+    setThinking(true);
+    try {
+      const fenForEngine = fen === "startpos" ? startFen : fen;
+      // If engine is not to move in engine mode, do nothing
+      if (playMode === 'engine' && currentTurn === playerColor) return;
+      if (positionStatus.gameOver) return;
+      const res = await fetch("/api/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fen: fenForEngine, depth, elo: elo ?? undefined, limitStrength: elo != null }) });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setErrorMsg(`Engine error: ${err?.error || res.status}`);
+        return;
+      }
+      const json = await res.json();
+      const uci: string | undefined = json?.bestmove;
+      if (!uci) return;
+      const nextFen = applyMoveUci(fenForEngine, uci);
+      if (nextFen) {
+        setPlayHistory(h => [...h, fen]);
+        setFen(nextFen);
+      }
+    } finally {
+      setThinking(false);
+    }
+  }, [fen, depth, applyMoveUci, startFen, playMode, currentTurn, playerColor, positionStatus.gameOver]);
+
+  const onPieceDrop = useCallback(({ sourceSquare, targetSquare }: { sourceSquare: string; targetSquare: string; }): boolean => {
+    if (playMode === 'off' || thinking) return false;
+    if (playMode === 'engine' && currentTurn !== playerColor) return false;
+    try {
+      const pos = buildPosition();
+      const from = parseSquare(sourceSquare);
+      const to = parseSquare(targetSquare);
+      if (from == null || to == null) return false;
+      const move: NormalMove = { from, to };
+      if (!pos.isLegal(move as Move)) {
+        // check if any promotion is legal; if yes, show picker
+        const promos: Role[] = ['queen', 'rook', 'bishop', 'knight'];
+        const hasPromo = promos.some(r => pos.isLegal({ from, to, promotion: r } as Move));
+        if (hasPromo) {
+          setPendingPromotion({ from: sourceSquare, to: targetSquare });
+          return false;
+        }
+        return false;
+      }
+      pos.play(move as Move);
+      const nextFen = makeFen(pos.toSetup());
+      setPlayHistory(h => [...h, fen]);
+      setFen(nextFen);
+      return true;
+    } catch {
+      return false;
+    }
+  }, [playMode, thinking, buildPosition, fen, engineReply, currentTurn, playerColor]);
+
+  const newGame = useCallback(() => {
+    setPlayHistory([]);
+    setFen("startpos");
+  }, []);
+
+  // Auto-trigger engine move only when it's the engine's turn
+  useEffect(() => {
+    if (playMode !== 'engine') return;
+    if (engineOk === false) return;
+    if (thinking) return;
+    if (currentTurn !== playerColor) {
+      void engineReply();
+    }
+  }, [fen, currentTurn, playMode, playerColor, thinking, engineOk, engineReply]);
+
+  const undo = useCallback(() => {
+    setPlayHistory(h => {
+      if (!h.length) return h;
+      const prev = h[h.length - 1];
+      setFen(prev);
+      return h.slice(0, -1);
+    });
+  }, []);
+
+  const undoEngine = useCallback(() => {
+    setPlayHistory(h => {
+      if (h.length < 2) return h;
+      const prev = h[h.length - 2];
+      setFen(prev);
+      return h.slice(0, - 2);
+    });
+  }, []);
+
+  const completePromotion = useCallback((role: Role) => {
+    if (!pendingPromotion) return;
+    const { from: fromStr, to: toStr } = pendingPromotion;
+    setPendingPromotion(null);
+    try {
+      const pos = buildPosition();
+      const from = parseSquare(fromStr);
+      const to = parseSquare(toStr);
+      if (from == null || to == null) return;
+      const mv = { from, to, promotion: role } as Move;
+      if (!pos.isLegal(mv)) return;
+      pos.play(mv);
+      const nextFen = makeFen(pos.toSetup());
+      setPlayHistory(h => [...h, fen]);
+      setFen(nextFen);
+    } catch {}
+  }, [pendingPromotion, buildPosition, fen, playMode, engineReply]);
+
+  // Map difficulty presets to depth
+  useEffect(() => {
+    if (difficulty === 'easy') setDepth(8);
+    else if (difficulty === 'medium') setDepth(12);
+    else if (difficulty === 'hard') setDepth(18);
+  }, [difficulty]);
+
   return (
     <div className="min-h-screen p-6 max-w-5xl mx-auto">
       <h1 className="text-2xl font-semibold mb-4">Chess Analyzer</h1>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
         <div className="w-full max-w-[480px]">
-          <Chessboard options={{ position: fen === "startpos" ? undefined : fen, allowDragging: false }} />
+          <Chessboard options={{ position: fen === "startpos" ? undefined : fen, allowDragging: playMode !== 'off' && !thinking && !positionStatus.gameOver, squareStyles, onPieceDrop: ({ sourceSquare, targetSquare }) => onPieceDrop({ sourceSquare, targetSquare: targetSquare || sourceSquare }) }} />
+          {positionStatus.gameOver && (
+            <div className="mt-2 text-sm font-semibold text-red-600">{positionStatus.outcomeText}</div>
+          )}
+          {pendingPromotion && (
+            <div className="mt-2 flex gap-2 text-sm">
+              <span>Promote to:</span>
+              {(['queen','rook','bishop','knight'] as const).map(r => (
+                <button key={r} className="px-2 py-1 rounded bg-gray-100" onClick={() => completePromotion(r)}>{r}</button>
+              ))}
+              <button className="px-2 py-1 rounded" onClick={() => setPendingPromotion(null)}>Cancel</button>
+            </div>
+          )}
         </div>
         <div className="space-y-4">
           <label className="block text-sm font-medium">FEN</label>
@@ -222,12 +451,47 @@ function HomeInner() {
             )}
           </div>
           <div>
-            <label className="block text-sm font-medium mb-1">Depth: {depth}</label>
-            <input type="range" min={6} max={22} step={1} value={depth} onChange={(e) => setDepth(parseInt(e.target.value))} className="w-full" />
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-sm font-medium">Depth: {depth}</label>
+              <select className="border rounded px-2 py-1 text-sm" value={difficulty} onChange={(e)=>{ const v = e.target.value; if (v==='custom'||v==='easy'||v==='medium'||v==='hard') setDifficulty(v); }}>
+                <option value="custom">Custom</option>
+                <option value="easy">Easy</option>
+                <option value="medium">Medium</option>
+                <option value="hard">Hard</option>
+              </select>
+            </div>
+            <input type="range" min={6} max={22} step={1} value={depth} onChange={(e) => { setDepth(parseInt(e.target.value)); setDifficulty('custom'); }} className="w-full" />
+            <div className="mt-2 flex items-center gap-2">
+              <label className="text-sm">Elo limit:</label>
+              <input type="number" className="border rounded px-2 py-1 text-sm w-24" min={1350} max={2850} step={50} value={elo ?? ''} onChange={(e)=>{ const v = e.target.value === '' ? null : Math.max(1350, Math.min(2850, parseInt(e.target.value)||1350)); setElo(v); }} placeholder="off" />
+              <span className="text-xs text-gray-500">(1350–2850; blank = off)</span>
+            </div>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2 items-center">
             <button className="px-3 py-2 rounded bg-black text-white disabled:opacity-50" onClick={handleAnalyzeServer} disabled={!isFenValid || loading}>{loading ? 'Analyzing…' : 'Analyze (Server)'}</button>
             <button className="px-3 py-2 rounded bg-gray-200 disabled:opacity-50" onClick={handleSave} disabled={saving || moves.length===0 || series.length===0}>{saving ? 'Saving…' : 'Save Analysis'}</button>
+            <button className="px-3 py-2 rounded bg-gray-200" onClick={testEngine}>Test Engine</button>
+            {engineOk === true && <span className="text-xs text-green-600">Engine OK{engineReqId ? ` (${engineReqId})` : ''}</span>}
+            {engineOk === false && <span className="text-xs text-red-600">Engine NOT READY{engineReqId ? ` (${engineReqId})` : ''}</span>}
+            <select className="border rounded px-2 py-1 text-sm" value={playMode} onChange={(e)=>{
+              const v = e.target.value;
+              if (v === 'off' || v === 'engine' || v === 'hotseat') setPlayMode(v);
+            }}>
+              <option value="off">Player mode: off</option>
+              <option value="engine">Play vs Engine</option>
+              <option value="hotseat">Two-player (local)</option>
+            </select>
+            <select className="border rounded px-2 py-1 text-sm" value={playerColor} onChange={(e)=>{
+              const v = e.target.value;
+              if (v === 'white' || v === 'black') setPlayerColor(v);
+            }} disabled={playMode==='off'}>
+              <option value="white">White</option>
+              <option value="black">Black</option>
+            </select>
+            <button className="px-2 py-1 rounded bg-gray-100" onClick={newGame} disabled={playMode==='off'}>New game</button>
+            <button className="px-2 py-1 rounded bg-gray-100" onClick={undo} disabled={playHistory.length===0}>Undo</button>
+            {playMode==='engine' && <button className="px-2 py-1 rounded bg-gray-100" onClick={undoEngine} disabled={playHistory.length<2}>Undo 2</button>}
+            {thinking && <span className="text-xs text-gray-500">Engine thinking…</span>}
           </div>
           {errorMsg && (
             <div className="text-sm text-red-600">{errorMsg}</div>
