@@ -6,7 +6,7 @@ import { parsePgn, startingPosition } from "chessops/pgn";
 import { parseSan } from "chessops/san";
 import { defaultPosition, setupPosition } from "chessops/variant";
 import { parseSquare, parseUci, squareFile, squareRank } from "chessops/util";
-import type { Move, NormalMove, Role } from "chessops";
+import type { Move, NormalMove, Role, Position } from "chessops";
 import { FILE_NAMES, RANK_NAMES } from "chessops";
 import { useRouter, useSearchParams } from "next/navigation";
 
@@ -202,16 +202,17 @@ function HomeInner() {
     } catch { return ""; }
   }, []);
 
-  const positionStatus = useMemo(() => {
+  type PositionStatus = { inCheck: boolean; checkedSquare: string | null; gameOver: boolean; outcomeText: string | null };
+  const positionStatus = useMemo<PositionStatus>(() => {
     try {
-      const pos = ((): any => {
+      const pos: Position | null = (() => {
         const setupRes = fen === "startpos" ? parseFen(startFen) : parseFen(fen);
         if (setupRes.isErr) return null;
         const res = setupPosition("chess", setupRes.unwrap());
         if (res.isErr) return null;
         return res.unwrap();
       })();
-      if (!pos) return { inCheck: false, checkedSquare: null as string | null, gameOver: false, outcomeText: null as string | null };
+      if (!pos) return { inCheck: false, checkedSquare: null, gameOver: false, outcomeText: null };
       const ctx = pos.ctx();
       const inCheck = pos.isCheck();
       const checkedSquare = inCheck && ctx.king !== undefined ? squareToName(ctx.king) : null;
@@ -225,7 +226,7 @@ function HomeInner() {
       }
       return { inCheck, checkedSquare, gameOver, outcomeText };
     } catch {
-      return { inCheck: false, checkedSquare: null as string | null, gameOver: false, outcomeText: null as string | null };
+      return { inCheck: false, checkedSquare: null, gameOver: false, outcomeText: null };
     }
   }, [fen, startFen, squareToName]);
 
@@ -289,7 +290,7 @@ function HomeInner() {
     } finally {
       setThinking(false);
     }
-  }, [fen, depth, applyMoveUci, startFen, playMode, currentTurn, playerColor, positionStatus.gameOver]);
+  }, [fen, depth, applyMoveUci, startFen, currentTurn, playerColor, positionStatus.gameOver, elo]);
 
   const onPieceDrop = useCallback(({ sourceSquare, targetSquare }: { sourceSquare: string; targetSquare: string; }): boolean => {
     if (playMode === 'off' || thinking) return false;

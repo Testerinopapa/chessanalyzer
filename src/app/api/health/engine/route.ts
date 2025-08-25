@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { spawn } from "child_process";
 import fs from "fs";
 import { logger } from "@/lib/logger";
+import { EnginePool } from "@/lib/enginePool";
 
 function isExecutable(p: string): boolean {
 	try { fs.accessSync(p, fs.constants.X_OK); return true; } catch { return false; }
@@ -37,11 +38,13 @@ export async function GET() {
 		// send isready after uciok seen
 		engine.stdout.once("data", () => { try { engine.stdin.write("isready\n"); } catch {} });
 		const ok = await done.finally(() => { try { engine.stdin.write("quit\n"); } catch {} });
-		if (!ok) return NextResponse.json({ ok: false, reqId, error: "not_ready" }, { status: 503 });
-		return NextResponse.json({ ok: true, reqId });
+		const pool = EnginePool.getHealth?.() ?? EnginePool.getHealth?.call(EnginePool);
+		if (!ok) return NextResponse.json({ ok: false, reqId, error: "not_ready", pool }, { status: 503 });
+		return NextResponse.json({ ok: true, reqId, pool });
 	} catch (err) {
 		logger.error({ reqId, err: String(err) }, "engine:health_error");
-		return NextResponse.json({ ok: false, reqId, error: "spawn_error" }, { status: 503 });
+		const pool = EnginePool.getHealth?.() ?? EnginePool.getHealth?.call(EnginePool);
+		return NextResponse.json({ ok: false, reqId, error: "spawn_error", pool }, { status: 503 });
 	}
 }
 
