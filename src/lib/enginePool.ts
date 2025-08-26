@@ -121,7 +121,7 @@ class EnginePoolImpl {
       if (params.limitStrength) { this.engine.stdin.write(`setoption name UCI_LimitStrength value true\n`); if (params.elo) this.engine.stdin.write(`setoption name UCI_Elo value ${params.elo}\n`); }
       this.engine.stdin.write(`position fen ${params.fen}\n`);
       this.engine.stdin.write(`go depth ${params.depth}\n`);
-    } catch (err) {
+    } catch {
       try { this.engine.stdout.off("data", onData); } catch {}
       this.busy = false; reject(new Error("Engine write failed")); setImmediate(() => this.pump());
     }

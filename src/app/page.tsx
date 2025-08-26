@@ -40,6 +40,10 @@ function HomeInner() {
   const [elo, setElo] = useState<number | null>(null);
   const [engineOk, setEngineOk] = useState<boolean | null>(null);
   const [engineReqId, setEngineReqId] = useState<string | null>(null);
+  const [lastMove, setLastMove] = useState<{ from: string; to: string } | null>(null);
+  const [currentCp, setCurrentCp] = useState<number | null>(null);
+  const [blunders, setBlunders] = useState<{ ply: number; delta: number }[]>([]);
+  const audioCtxRef = useRef<AudioContext | null>(null);
 
   const handleAnalyzeServer = useCallback(async () => {
     setLoading(true);
@@ -124,6 +128,13 @@ function HomeInner() {
       out[i] = cp ?? 0;
       setSeries([...out]);
     }
+    // blunder detection (swing >= 150 cp)
+    const swings: { ply: number; delta: number }[] = [];
+    for (let i = 1; i < out.length; i++) {
+      const delta = out[i] - out[i-1];
+      if (Math.abs(delta) >= 150) swings.push({ ply: i+1, delta });
+    }
+    setBlunders(swings);
     setAnalyzingAll(false);
   }, [moves, analyzeFenToCp]);
 
@@ -231,14 +242,33 @@ function HomeInner() {
   }, [fen, startFen, squareToName]);
 
   const squareStyles = useMemo<Record<string, React.CSSProperties>>(() => {
-    if (!positionStatus.checkedSquare) return {};
-    return {
-      [positionStatus.checkedSquare]: {
+    const styles: Record<string, React.CSSProperties> = {};
+    if (positionStatus.checkedSquare) {
+      styles[positionStatus.checkedSquare] = {
         boxShadow: "inset 0 0 0 3px rgba(220,38,38,.9)",
         backgroundColor: "rgba(220,38,38,.15)",
-      },
-    };
-  }, [positionStatus.checkedSquare]);
+      };
+    }
+    if (lastMove) {
+      styles[lastMove.from] = { outline: "2px solid rgba(59,130,246,.9)", outlineOffset: "-2px", backgroundColor: "rgba(59,130,246,.12)" };
+      styles[lastMove.to] = { outline: "2px solid rgba(59,130,246,.9)", outlineOffset: "-2px", backgroundColor: "rgba(59,130,246,.12)" };
+    }
+    return styles;
+  }, [positionStatus.checkedSquare, lastMove]);
+
+  const playMoveSound = useCallback(() => {
+    try {
+      const Ctx = (window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext }).AudioContext || (window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!Ctx) return;
+      const ctx = audioCtxRef.current || new Ctx();
+      audioCtxRef.current = ctx;
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = "sine"; o.frequency.value = 660; g.gain.value = 0.04;
+      o.connect(g); g.connect(ctx.destination);
+      o.start(); setTimeout(() => { try { o.stop(); } catch {} }, 120);
+    } catch {}
+  }, []);
 
   const buildPosition = useCallback(() => {
     const setupRes = fen === "startpos" ? parseFen(startFen) : parseFen(fen);
@@ -286,11 +316,19 @@ function HomeInner() {
       if (nextFen) {
         setPlayHistory(h => [...h, fen]);
         setFen(nextFen);
+        const mv = parseUci(uci) as Move | undefined;
+        if (mv && (mv as any).from !== undefined && (mv as any).to !== undefined) {
+          const m = mv as unknown as { from: number; to: number };
+          setLastMove({ from: squareToName(m.from), to: squareToName(m.to) });
+        }
+        const cp = scoreToCp(json?.info?.score);
+        if (cp !== null) setCurrentCp(cp);
+        playMoveSound();
       }
     } finally {
       setThinking(false);
     }
-  }, [fen, depth, applyMoveUci, startFen, currentTurn, playerColor, positionStatus.gameOver, elo]);
+  }, [fen, depth, applyMoveUci, startFen, currentTurn, playerColor, positionStatus.gameOver, elo, squareToName, playMoveSound]);
 
   const onPieceDrop = useCallback(({ sourceSquare, targetSquare }: { sourceSquare: string; targetSquare: string; }): boolean => {
     if (playMode === 'off' || thinking) return false;
@@ -315,11 +353,14 @@ function HomeInner() {
       const nextFen = makeFen(pos.toSetup());
       setPlayHistory(h => [...h, fen]);
       setFen(nextFen);
+      setLastMove({ from: sourceSquare, to: targetSquare });
+      void (async () => { const cp = await analyzeFenToCp(nextFen); if (cp !== null) setCurrentCp(cp); })();
+      playMoveSound();
       return true;
     } catch {
       return false;
     }
-  }, [playMode, thinking, buildPosition, fen, engineReply, currentTurn, playerColor]);
+  }, [playMode, thinking, buildPosition, fen, currentTurn, playerColor, squareToName, playMoveSound, analyzeFenToCp]);
 
   const newGame = useCallback(() => {
     setPlayHistory([]);
@@ -369,8 +410,11 @@ function HomeInner() {
       const nextFen = makeFen(pos.toSetup());
       setPlayHistory(h => [...h, fen]);
       setFen(nextFen);
+      setLastMove({ from: fromStr, to: toStr });
+      void (async () => { const cp = await analyzeFenToCp(nextFen); if (cp !== null) setCurrentCp(cp); })();
+      playMoveSound();
     } catch {}
-  }, [pendingPromotion, buildPosition, fen, playMode, engineReply]);
+  }, [pendingPromotion, buildPosition, fen, squareToName, playMoveSound, analyzeFenToCp]);
 
   // Map difficulty presets to depth
   useEffect(() => {
@@ -383,20 +427,31 @@ function HomeInner() {
     <div className="min-h-screen p-6 max-w-5xl mx-auto">
       <h1 className="text-2xl font-semibold mb-4">Chess Analyzer</h1>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
-        <div className="w-full max-w-[480px]">
-          <Chessboard options={{ position: fen === "startpos" ? undefined : fen, allowDragging: playMode !== 'off' && !thinking && !positionStatus.gameOver, squareStyles, onPieceDrop: ({ sourceSquare, targetSquare }) => onPieceDrop({ sourceSquare, targetSquare: targetSquare || sourceSquare }) }} />
-          {positionStatus.gameOver && (
-            <div className="mt-2 text-sm font-semibold text-red-600">{positionStatus.outcomeText}</div>
-          )}
-          {pendingPromotion && (
-            <div className="mt-2 flex gap-2 text-sm">
-              <span>Promote to:</span>
-              {(['queen','rook','bishop','knight'] as const).map(r => (
-                <button key={r} className="px-2 py-1 rounded bg-gray-100" onClick={() => completePromotion(r)}>{r}</button>
-              ))}
-              <button className="px-2 py-1 rounded" onClick={() => setPendingPromotion(null)}>Cancel</button>
-            </div>
-          )}
+        <div className="w-full max-w-[480px] flex gap-3 items-start">
+          <div>
+            <Chessboard options={{ position: fen === "startpos" ? undefined : fen, allowDragging: playMode !== 'off' && !thinking && !positionStatus.gameOver, squareStyles, onPieceDrop: ({ sourceSquare, targetSquare }) => onPieceDrop({ sourceSquare, targetSquare: targetSquare || sourceSquare }) }} />
+            {positionStatus.gameOver && (
+              <div className="mt-2 text-sm font-semibold text-red-600">{positionStatus.outcomeText}</div>
+            )}
+            {pendingPromotion && (
+              <div className="mt-2 flex gap-2 text-sm">
+                <span>Promote to:</span>
+                {(['queen','rook','bishop','knight'] as const).map(r => (
+                  <button key={r} className="px-2 py-1 rounded bg-gray-100" onClick={() => completePromotion(r)}>{r}</button>
+                ))}
+                <button className="px-2 py-1 rounded" onClick={() => setPendingPromotion(null)}>Cancel</button>
+              </div>
+            )}
+          </div>
+          <div className="w-4 h-[384px] md:h-[480px] bg-gray-200 rounded relative overflow-hidden">
+            {currentCp !== null && (
+              <div className="absolute left-0 right-0" style={{
+                height: '2px',
+                top: `${50 - Math.max(-800, Math.min(800, currentCp)) / 16}%`,
+                background: currentCp >= 0 ? '#16a34a' : '#ef4444'
+              }} />
+            )}
+          </div>
         </div>
         <div className="space-y-4">
           <label className="block text-sm font-medium">FEN</label>
@@ -448,6 +503,16 @@ function HomeInner() {
                   })()}
                 </svg>
                 <div className="h-2 mt-2 w-full bg-gradient-to-r from-black via-gray-200 to-white rounded" />
+                {blunders.length > 0 && (
+                  <div className="mt-2 text-xs">
+                    <div className="font-medium">Blunder alerts (≥ 1.5 pawns swing):</div>
+                    <ul className="list-disc pl-4">
+                      {blunders.map(b => (
+                        <li key={b.ply}>Ply {b.ply}: Δ{(b.delta/100).toFixed(2)}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
             )}
           </div>
