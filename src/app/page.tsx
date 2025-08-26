@@ -3,7 +3,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import dynamic from "next/dynamic";
 import { parseFen, makeFen } from "chessops/fen";
 import { parsePgn, startingPosition } from "chessops/pgn";
-import { parseSan } from "chessops/san";
+import { parseSan, makeSan } from "chessops/san";
 import { defaultPosition, setupPosition } from "chessops/variant";
 import { parseSquare, parseUci, squareFile, squareRank } from "chessops/util";
 import type { Move, NormalMove, Role, Position } from "chessops";
@@ -45,6 +45,10 @@ function HomeInner() {
   const [currentCp, setCurrentCp] = useState<number | null>(null);
   const [blunders, setBlunders] = useState<{ ply: number; delta: number }[]>([]);
   const audioCtxRef = useRef<AudioContext | null>(null);
+  const [lastGameFens, setLastGameFens] = useState<string[]>([]);
+  const [lastGameSans, setLastGameSans] = useState<string[]>([]);
+  const [showReviewBanner, setShowReviewBanner] = useState(false);
+  const prevGameOverRef = useRef(false);
 
   const handleAnalyzeServer = useCallback(async () => {
     setLoading(true);
@@ -320,10 +324,21 @@ function HomeInner() {
         const mv = parseUci(uci) as Move | undefined;
         if (mv && isNormal(mv)) {
           setLastMove({ from: squareToName(mv.from), to: squareToName(mv.to) });
+          // compute SAN from previous position
+          const setupRes = parseFen(fenForEngine);
+          if (setupRes.isOk) {
+            const resPos = setupPosition("chess", setupRes.unwrap());
+            if (resPos.isOk) {
+              const p = resPos.unwrap();
+              const san = makeSan(p, mv);
+              setLastGameSans(arr => [...arr, san]);
+            }
+          }
         }
         const cp = scoreToCp(json?.info?.score);
         if (cp !== null) setCurrentCp(cp);
         playMoveSound();
+        setLastGameFens(arr => [...arr, nextFen]);
       }
     } finally {
       setThinking(false);
@@ -356,6 +371,12 @@ function HomeInner() {
       setLastMove({ from: sourceSquare, to: targetSquare });
       void (async () => { const cp = await analyzeFenToCp(nextFen); if (cp !== null) setCurrentCp(cp); })();
       playMoveSound();
+      // record SAN and FEN
+      try {
+        const san = makeSan(pos, move as Move);
+        setLastGameSans(arr => [...arr, san]);
+      } catch {}
+      setLastGameFens(arr => [...arr, nextFen]);
       return true;
     } catch {
       return false;
@@ -376,6 +397,25 @@ function HomeInner() {
       void engineReply();
     }
   }, [fen, currentTurn, playMode, playerColor, thinking, engineOk, engineReply]);
+
+  // Detect game over transition to trigger review banner and stub analysis
+  useEffect(() => {
+    if (positionStatus.gameOver && !prevGameOverRef.current) {
+      setShowReviewBanner(true);
+      // Trigger background batch analysis
+      const run = async () => {
+        try {
+          const res = await fetch('/api/report/generate', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fens: lastGameFens, sans: lastGameSans, depth, elo })
+          });
+          // ignore result for now; /report/latest will pick it up
+        } catch {}
+      };
+      void run();
+    }
+    prevGameOverRef.current = positionStatus.gameOver;
+  }, [positionStatus.gameOver, lastGameFens, lastGameSans, depth, elo]);
 
   const undo = useCallback(() => {
     setPlayHistory(h => {
@@ -413,6 +453,11 @@ function HomeInner() {
       setLastMove({ from: fromStr, to: toStr });
       void (async () => { const cp = await analyzeFenToCp(nextFen); if (cp !== null) setCurrentCp(cp); })();
       playMoveSound();
+      try {
+        const san = makeSan(pos, mv as Move);
+        setLastGameSans(arr => [...arr, san]);
+      } catch {}
+      setLastGameFens(arr => [...arr, nextFen]);
     } catch {}
   }, [pendingPromotion, buildPosition, fen, playMoveSound, analyzeFenToCp]);
 
@@ -432,6 +477,12 @@ function HomeInner() {
             <Chessboard options={{ position: fen === "startpos" ? undefined : fen, allowDragging: playMode !== 'off' && !thinking && !positionStatus.gameOver, squareStyles, onPieceDrop: ({ sourceSquare, targetSquare }) => onPieceDrop({ sourceSquare, targetSquare: targetSquare || sourceSquare }) }} />
             {positionStatus.gameOver && (
               <div className="mt-2 text-sm font-semibold text-red-600">{positionStatus.outcomeText}</div>
+            )}
+            {showReviewBanner && (
+              <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded text-sm flex items-center justify-between">
+                <span>Game finished. Review the most recent game?</span>
+                <a href="/report/latest" className="px-2 py-1 rounded bg-blue-600 text-white">Review</a>
+              </div>
             )}
             {pendingPromotion && (
               <div className="mt-2 flex gap-2 text-sm">

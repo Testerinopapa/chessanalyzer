@@ -19,4 +19,17 @@ model Analysis {
 	series    String   // JSON string: number[] (centipawns per ply)
 }
 
+model Report {
+	id         String   @id @default(cuid())
+	createdAt  DateTime @default(now())
+	pgn        String
+	depth      Int
+	elo        Int?
+	fens       String   // JSON string: string[]
+	sans       String   // JSON string: string[]
+	evals      String   // JSON string: number[] (cp per ply)
+	tags       String   // JSON string: string[] (per ply annotation)
+	accuracy   Float
+}
+
 
