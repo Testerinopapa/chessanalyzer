@@ -8,12 +8,14 @@ import type { Move, Role } from "chessops";
 import { isNormal } from "chessops";
 import { FILE_NAMES, RANK_NAMES } from "chessops";
 import { squareFile, squareRank } from "chessops/util";
+import { logger } from "@/lib/logger";
 
 type GenerateRequest = {
   fens: string[];
   sans: string[];
   depth?: number;
   elo?: number | null;
+  debug?: boolean;
 };
 
 function scoreToCp(s: { type: "cp" | "mate"; value: number } | undefined): number | null {
@@ -50,6 +52,7 @@ export async function POST(req: NextRequest) {
   const sans = Array.isArray(body.sans) ? body.sans : [];
   const depth = body.depth ?? 12;
   const elo = body.elo ?? null;
+  const debug = !!body.debug;
   if (!fens.length || sans.length !== fens.length) {
     return NextResponse.json({ error: "Invalid fens/sans" }, { status: 400 });
   }
@@ -109,6 +112,24 @@ export async function POST(req: NextRequest) {
     playedIsMateArr.push(!!playedIsMate);
     bestMateValArr.push(bestMateVal);
     playedMateValArr.push(playedMateVal);
+    if (debug) {
+      logger.info({
+        ply: i+1,
+        san: sans[i],
+        preFen,
+        playedUci,
+        preBest: preBest.info?.score,
+        prePlayed: playedUci ? prePlayedCp : null,
+        preBestCp,
+        prePlayedCp,
+        cpl,
+        bestIsMate,
+        bestMateVal,
+        playedIsMate,
+        playedMateVal,
+        postCp,
+      }, "report:generate_cpl_debug");
+    }
   }
 
   const tags: string[] = [];
