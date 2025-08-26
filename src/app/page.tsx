@@ -7,6 +7,7 @@ import { parseSan } from "chessops/san";
 import { defaultPosition, setupPosition } from "chessops/variant";
 import { parseSquare, parseUci, squareFile, squareRank } from "chessops/util";
 import type { Move, NormalMove, Role, Position } from "chessops";
+import { isNormal } from "chessops";
 import { FILE_NAMES, RANK_NAMES } from "chessops";
 import { useRouter, useSearchParams } from "next/navigation";
 
@@ -317,9 +318,8 @@ function HomeInner() {
         setPlayHistory(h => [...h, fen]);
         setFen(nextFen);
         const mv = parseUci(uci) as Move | undefined;
-        if (mv && (mv as any).from !== undefined && (mv as any).to !== undefined) {
-          const m = mv as unknown as { from: number; to: number };
-          setLastMove({ from: squareToName(m.from), to: squareToName(m.to) });
+        if (mv && isNormal(mv)) {
+          setLastMove({ from: squareToName(mv.from), to: squareToName(mv.to) });
         }
         const cp = scoreToCp(json?.info?.score);
         if (cp !== null) setCurrentCp(cp);
@@ -328,7 +328,7 @@ function HomeInner() {
     } finally {
       setThinking(false);
     }
-  }, [fen, depth, applyMoveUci, startFen, currentTurn, playerColor, positionStatus.gameOver, elo, squareToName, playMoveSound]);
+  }, [fen, depth, applyMoveUci, startFen, currentTurn, playerColor, positionStatus.gameOver, elo, squareToName, playMode, playMoveSound]);
 
   const onPieceDrop = useCallback(({ sourceSquare, targetSquare }: { sourceSquare: string; targetSquare: string; }): boolean => {
     if (playMode === 'off' || thinking) return false;
@@ -360,7 +360,7 @@ function HomeInner() {
     } catch {
       return false;
     }
-  }, [playMode, thinking, buildPosition, fen, currentTurn, playerColor, squareToName, playMoveSound, analyzeFenToCp]);
+  }, [playMode, thinking, buildPosition, fen, currentTurn, playerColor, playMoveSound, analyzeFenToCp]);
 
   const newGame = useCallback(() => {
     setPlayHistory([]);
@@ -414,7 +414,7 @@ function HomeInner() {
       void (async () => { const cp = await analyzeFenToCp(nextFen); if (cp !== null) setCurrentCp(cp); })();
       playMoveSound();
     } catch {}
-  }, [pendingPromotion, buildPosition, fen, squareToName, playMoveSound, analyzeFenToCp]);
+  }, [pendingPromotion, buildPosition, fen, playMoveSound, analyzeFenToCp]);
 
   // Map difficulty presets to depth
   useEffect(() => {
