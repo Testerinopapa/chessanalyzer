@@ -51,15 +51,25 @@ export default function LatestReport() {
   const tags = useMemo(() => (report ? (JSON.parse(report.tags) as string[]) : []), [report]);
 
   const keyMoments = useMemo(() => {
-    const items: { ply: number; tag: string; delta: number }[] = [];
-    for (let i = 0; i < sans.length; i++) {
+    // Rubric-only: include plies where tag is non-empty; rank by severity
+    const items: { ply: number; tag: string }[] = [];
+    for (let i = 0; i < tags.length; i++) {
       const tag = tags[i] || "";
-      const delta = i === 0 ? 0 : (evals[i] - evals[i-1]);
-      if (tag || Math.abs(delta) >= 150) items.push({ ply: i, tag, delta });
+      if (tag) items.push({ ply: i, tag });
     }
-    const rank = (t: string) => t.startsWith('Blunder') || t === 'Missed Win' ? 3 : t === 'Mistake' ? 2 : t === 'Inaccuracy' ? 1 : 0;
-    return items.sort((a,b) => (rank(b.tag)-rank(a.tag)) || Math.abs(b.delta)-Math.abs(a.delta)).slice(0, 10);
-  }, [sans, evals, tags]);
+    const rank = (t: string) => {
+      switch (t) {
+        case 'Blunder': return 5;
+        case 'Mistake': return 4;
+        case 'Inaccuracy': return 3;
+        case 'Excellent': return 2;
+        case 'Good': return 1;
+        case 'Best': return 1;
+        default: return 0;
+      }
+    };
+    return items.sort((a,b) => rank(b.tag) - rank(a.tag)).slice(0, 10);
+  }, [tags]);
 
   const onGraphClick = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
     const rect = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
@@ -102,14 +112,13 @@ export default function LatestReport() {
           {/* Key moments */}
           <div className="border rounded p-3">
             <div className="font-medium mb-2">Key moments</div>
-            {keyMoments.length === 0 ? <div className="text-sm text-gray-500">No major swings detected.</div> : (
+            {keyMoments.length === 0 ? <div className="text-sm text-gray-500">No key moments detected.</div> : (
               <ul className="space-y-1">
                 {keyMoments.map(k => (
                   <li key={k.ply}>
                     <button className="text-left w-full flex items-center gap-2 hover:underline" onClick={() => setPly(k.ply)}>
-                      <span className="text-xs px-2 py-0.5 rounded bg-yellow-100 text-yellow-800 min-w-[6rem] text-center">{tags[k.ply] || (Math.abs(k.delta)>=150? 'Big swing':'')}</span>
+                      <span className="text-xs px-2 py-0.5 rounded bg-yellow-100 text-yellow-800 min-w-[6rem] text-center">{tags[k.ply]}</span>
                       <span className="text-sm">#{k.ply+1} {sans[k.ply]}</span>
-                      <span className="text-xs text-gray-500">Δ{(k.delta/100).toFixed(2)}</span>
                     </button>
                   </li>
                 ))}

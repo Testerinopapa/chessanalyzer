@@ -2,7 +2,7 @@ import { spawn, ChildProcessWithoutNullStreams } from "child_process";
 import fs from "fs";
 import { logger } from "@/lib/logger";
 
-export type AnalyzeParams = { fen: string; depth: number; elo?: number; limitStrength?: boolean };
+export type AnalyzeParams = { fen: string; depth: number; elo?: number; limitStrength?: boolean; searchMoves?: string[] };
 export type AnalyzeInfo = { depth?: number; seldepth?: number; multipv?: number; score?: { type: "cp"|"mate"; value: number }; nodes?: number; nps?: number; timeMs?: number; pv?: string[] };
 export type AnalyzeResult = { bestmove: string | null; info: AnalyzeInfo | null; raw: string[]; reqId: string };
 
@@ -82,7 +82,7 @@ class EnginePoolImpl {
   }
 
   public analyze(params: AnalyzeParams): Promise<AnalyzeResult> {
-    const key = `${params.fen}|d${params.depth}|e${params.elo ?? "-"}`;
+    const key = `${params.fen}|d${params.depth}|e${params.elo ?? "-"}|sm${params.searchMoves?.join(',') ?? '-'}`;
     const now = Date.now();
     const existing = this.activeDedupe.get(key);
     if (existing && now - existing.ts < 5000) return existing.promise;
@@ -120,7 +120,10 @@ class EnginePoolImpl {
     try {
       if (params.limitStrength) { this.engine.stdin.write(`setoption name UCI_LimitStrength value true\n`); if (params.elo) this.engine.stdin.write(`setoption name UCI_Elo value ${params.elo}\n`); }
       this.engine.stdin.write(`position fen ${params.fen}\n`);
-      this.engine.stdin.write(`go depth ${params.depth}\n`);
+      const goCmd = params.searchMoves && params.searchMoves.length > 0
+        ? `go depth ${params.depth} searchmoves ${params.searchMoves.join(' ')}`
+        : `go depth ${params.depth}`;
+      this.engine.stdin.write(`${goCmd}\n`);
     } catch {
       try { this.engine.stdout.off("data", onData); } catch {}
       this.busy = false; reject(new Error("Engine write failed")); setImmediate(() => this.pump());
