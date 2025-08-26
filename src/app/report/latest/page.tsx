@@ -20,6 +20,12 @@ const cpToY = (cp: number, maxAbs = 800) => {
   return 50 - (clamped / maxAbs) * 45; // center 50, 10% top/bottom padding
 };
 
+const cpToWhitePercent = (cp: number | null, maxAbs = 800) => {
+  if (cp == null) return 50;
+  const clamped = Math.max(-maxAbs, Math.min(maxAbs, cp));
+  return ((clamped + maxAbs) / (2 * maxAbs)) * 100;
+};
+
 export default function LatestReport() {
   const [report, setReport] = useState<Report | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -75,8 +81,15 @@ export default function LatestReport() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
         {/* Board + controls */}
         <div className="space-y-3">
-          <div className="w-full max-w-[480px]">
-            <Chessboard options={{ position: fens[ply] === 'startpos' ? undefined : fens[ply], allowDragging: false }} />
+          <div className="w-full max-w-[480px] flex gap-3 items-start">
+            {/* Minimalist eval bar on the LEFT for report */}
+            <div className="w-8 h-[384px] md:h-[480px] border rounded overflow-hidden flex flex-col">
+              <div className="bg-white" style={{ height: `${cpToWhitePercent(evals[ply] ?? 0)}%`, transition: 'height 0.4s ease-in-out' }} />
+              <div className="bg-black" style={{ height: `${100 - cpToWhitePercent(evals[ply] ?? 0)}%`, transition: 'height 0.4s ease-in-out' }} />
+            </div>
+            <div>
+              <Chessboard options={{ position: fens[ply] === 'startpos' ? undefined : fens[ply], allowDragging: false }} />
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <button className="px-2 py-1 rounded border" onClick={() => setPly(0)}>|&lt;</button>

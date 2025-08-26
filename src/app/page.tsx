@@ -111,6 +111,11 @@ function HomeInner() {
     if (s.type === 'cp') return s.value;
     return (s.value >= 0 ? 1 : -1) * 10000;
   };
+  const cpToWhitePercent = (cp: number | null, maxAbs = 800) => {
+    if (cp == null) return 50;
+    const c = Math.max(-maxAbs, Math.min(maxAbs, cp));
+    return ((c + maxAbs) / (2 * maxAbs)) * 100;
+  };
 
   // Analyze a FEN and return cp
   const analyzeFenToCp = useCallback(async (fenStr: string): Promise<number | null> => {
@@ -473,6 +478,12 @@ function HomeInner() {
       <h1 className="text-2xl font-semibold mb-4">Chess Analyzer</h1>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
         <div className="w-full max-w-[480px] flex gap-3 items-start">
+          {/* Minimalist eval bar on the LEFT */}
+          <div className="w-8 h-[384px] md:h-[480px] border rounded overflow-hidden flex flex-col">
+            <div className="bg-white" style={{ height: `${cpToWhitePercent(currentCp)}%`, transition: 'height 0.4s ease-in-out' }} />
+            <div className="bg-black" style={{ height: `${100 - cpToWhitePercent(currentCp)}%`, transition: 'height 0.4s ease-in-out' }} />
+          </div>
+          {/* Board */}
           <div>
             <Chessboard options={{ position: fen === "startpos" ? undefined : fen, allowDragging: playMode !== 'off' && !thinking && !positionStatus.gameOver, squareStyles, onPieceDrop: ({ sourceSquare, targetSquare }) => onPieceDrop({ sourceSquare, targetSquare: targetSquare || sourceSquare }) }} />
             {positionStatus.gameOver && (
@@ -492,15 +503,6 @@ function HomeInner() {
                 ))}
                 <button className="px-2 py-1 rounded" onClick={() => setPendingPromotion(null)}>Cancel</button>
               </div>
-            )}
-          </div>
-          <div className="w-4 h-[384px] md:h-[480px] bg-gray-200 rounded relative overflow-hidden">
-            {currentCp !== null && (
-              <div className="absolute left-0 right-0" style={{
-                height: '2px',
-                top: `${50 - Math.max(-800, Math.min(800, currentCp)) / 16}%`,
-                background: currentCp >= 0 ? '#16a34a' : '#ef4444'
-              }} />
             )}
           </div>
         </div>
