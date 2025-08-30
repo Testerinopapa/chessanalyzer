@@ -32,7 +32,7 @@ function HomeInner() {
   const [saving, setSaving] = useState(false);
   type HistoryItem = { id: string; createdAt: string; pgn: string; depth: number; ply: number; fens: string; sans: string; series: string };
   const [history, setHistory] = useState<HistoryItem[]>([]);
-  const [playMode, setPlayMode] = useState<"off"|"engine"|"hotseat">("off");
+  const [playMode, setPlayMode] = useState<"off"|"engine"|"hotseat"|"engveng">("off");
   const [playerColor, setPlayerColor] = useState<"white"|"black">("white");
   const [thinking, setThinking] = useState(false);
   const [playHistory, setPlayHistory] = useState<string[]>([]);
@@ -44,10 +44,14 @@ function HomeInner() {
   const [lastMove, setLastMove] = useState<{ from: string; to: string } | null>(null);
   const [currentCp, setCurrentCp] = useState<number | null>(null);
   const [blunders, setBlunders] = useState<{ ply: number; delta: number }[]>([]);
+  const [, setLastTag] = useState<string | null>(null);
+  const [, setLastCpl] = useState<number | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const [lastGameFens, setLastGameFens] = useState<string[]>([]);
   const [lastGameSans, setLastGameSans] = useState<string[]>([]);
   const [showReviewBanner, setShowReviewBanner] = useState(false);
+  const [generatingReport, setGeneratingReport] = useState(false);
+  const [reportId, setReportId] = useState<string | null>(null);
   const prevGameOverRef = useRef(false);
 
   const handleAnalyzeServer = useCallback(async () => {
@@ -117,13 +121,80 @@ function HomeInner() {
     return ((c + maxAbs) / (2 * maxAbs)) * 100;
   };
 
-  // Analyze a FEN and return cp
+  // Convert a Move to UCI string (client copy of server helper)
+  const moveToUci = useCallback((m: Move): string | null => {
+    if (!isNormal(m)) return null;
+    const from = `${FILE_NAMES[squareFile((m as NormalMove).from)]}${RANK_NAMES[squareRank((m as NormalMove).from)]}`;
+    const to = `${FILE_NAMES[squareFile((m as NormalMove).to)]}${RANK_NAMES[squareRank((m as NormalMove).to)]}`;
+    const promo = (m as { promotion?: Role }).promotion;
+    if (promo) {
+      const letter = promo === "knight" ? "n" : promo === "bishop" ? "b" : promo === "rook" ? "r" : "q";
+      return `${from}${to}${letter}`;
+    }
+    return `${from}${to}`;
+  }, []);
+
+  // Map CPL to grading tag (same thresholds as server)
+  const tagFromCpl = useCallback((cpl: number): string => {
+    const ad = Math.max(0, cpl);
+    if (ad <= 30) return "Best";
+    if (ad <= 70) return "Excellent";
+    if (ad <= 150) return "Good";
+    if (ad <= 300) return "Inaccuracy";
+    if (ad <= 600) return "Mistake";
+    return "Blunder";
+  }, []);
+
+  // Grade the played move using pre-move eval vs restricted eval (mate-aware)
+  const gradeMove = useCallback(async (preFen: string, playedUci: string): Promise<{ tag: string; cpl: number } | null> => {
+    try {
+      const headers = { "Content-Type": "application/json" } as const;
+      const bodyBase = { depth, elo: elo ?? undefined, limitStrength: elo != null } as { depth: number; elo?: number; limitStrength: boolean };
+      const [preBestRes, prePlayedRes] = await Promise.all([
+        fetch("/api/analyze", { method: "POST", headers, body: JSON.stringify({ ...bodyBase, fen: preFen }) }),
+        fetch("/api/analyze", { method: "POST", headers, body: JSON.stringify({ ...bodyBase, fen: preFen, searchMoves: [playedUci] }) }),
+      ]);
+      if (!preBestRes.ok || !prePlayedRes.ok) return null;
+      const preBest = await preBestRes.json();
+      const prePlayed = await prePlayedRes.json();
+      const preBestCp = scoreToCp(preBest?.info?.score) ?? 0;
+      const prePlayedCp = scoreToCp(prePlayed?.info?.score) ?? preBestCp;
+      const bestIsMate = preBest?.info?.score?.type === "mate";
+      const playedIsMate = prePlayed?.info?.score?.type === "mate";
+      const bestMateVal = bestIsMate ? (preBest.info.score as { type: "mate"; value: number }).value : 0;
+      const playedMateVal = playedIsMate ? (prePlayed.info.score as { type: "mate"; value: number }).value : 0;
+      const cpl = Math.max(0, preBestCp - prePlayedCp);
+      // Mate-aware override
+      let tag = tagFromCpl(cpl);
+      if (bestIsMate) {
+        if (!playedIsMate) tag = "Blunder";
+        else if (Math.abs(playedMateVal) > Math.abs(bestMateVal)) tag = "Blunder";
+      }
+      return { tag, cpl };
+    } catch {
+      return null;
+    }
+  }, [depth, elo, tagFromCpl]);
+
+  
+
+  // Analyze a FEN and return cp normalized to WHITE's perspective
   const analyzeFenToCp = useCallback(async (fenStr: string): Promise<number | null> => {
     try {
       const res = await fetch("/api/analyze", { method: "POST", body: JSON.stringify({ fen: fenStr, depth }), headers: { "Content-Type": "application/json" } });
       if (!res.ok) return null;
       const json = await res.json();
-      return scoreToCp(json?.info?.score) ?? null;
+      const raw = scoreToCp(json?.info?.score);
+      if (raw == null) return null;
+      try {
+        // Determine turn without relying on startFen; startpos implies white to move
+        const setupRes = fenStr === "startpos" ? { isOk: true, unwrap: () => ({ turn: 'white' as const }) } : parseFen(fenStr);
+        if (setupRes.isOk) {
+          const t = setupRes.unwrap().turn as "white"|"black";
+          return t === "white" ? raw : -raw;
+        }
+      } catch {}
+      return raw;
     } catch {
       return null;
     }
@@ -217,6 +288,9 @@ function HomeInner() {
     return "white";
   }, [fen, startFen]);
 
+  // currentCp is already normalized to WHITE's perspective
+  const whiteCp = useMemo(() => currentCp, [currentCp]);
+
   const squareToName = useCallback((sq: number) => {
     try {
       return `${FILE_NAMES[squareFile(sq)]}${RANK_NAMES[squareRank(sq)]}`;
@@ -306,12 +380,26 @@ function HomeInner() {
     }
   }, [startFen]);
 
+  // Format a minimal PGN string from SAN moves (no headers)
+  const formatSanAsPgn = useCallback((sanList: string[]): string => {
+    const parts: string[] = [];
+    for (let i = 0; i < sanList.length; i += 2) {
+      const moveNo = Math.floor(i / 2) + 1;
+      const white = sanList[i] ?? "";
+      const black = sanList[i + 1];
+      if (black) parts.push(`${moveNo}. ${white} ${black}`);
+      else parts.push(`${moveNo}. ${white}`);
+    }
+    return parts.join(' ') + ' *';
+  }, []);
+
   const engineReply = useCallback(async () => {
     setThinking(true);
     try {
       const fenForEngine = fen === "startpos" ? startFen : fen;
       // If engine is not to move in engine mode, do nothing
       if (playMode === 'engine' && currentTurn === playerColor) return;
+      if (playMode === 'engveng' && positionStatus.gameOver) return;
       if (positionStatus.gameOver) return;
       const res = await fetch("/api/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fen: fenForEngine, depth, elo: elo ?? undefined, limitStrength: elo != null }) });
       if (!res.ok) {
@@ -340,7 +428,12 @@ function HomeInner() {
             }
           }
         }
-        const cp = scoreToCp(json?.info?.score);
+        // Grade the engine's move using pre-move fen and played UCI
+        void (async () => {
+          const graded = await gradeMove(fenForEngine, uci);
+          if (graded) { setLastTag(graded.tag); setLastCpl(graded.cpl); }
+        })();
+        const cp = await analyzeFenToCp(nextFen);
         if (cp !== null) setCurrentCp(cp);
         playMoveSound();
         setLastGameFens(arr => [...arr, nextFen]);
@@ -348,10 +441,10 @@ function HomeInner() {
     } finally {
       setThinking(false);
     }
-  }, [fen, depth, applyMoveUci, startFen, currentTurn, playerColor, positionStatus.gameOver, elo, squareToName, playMode, playMoveSound]);
+  }, [fen, depth, applyMoveUci, startFen, currentTurn, playerColor, positionStatus.gameOver, elo, squareToName, playMode, playMoveSound, analyzeFenToCp, gradeMove]);
 
   const onPieceDrop = useCallback(({ sourceSquare, targetSquare }: { sourceSquare: string; targetSquare: string; }): boolean => {
-    if (playMode === 'off' || thinking) return false;
+    if (playMode === 'off' || playMode === 'engveng' || thinking) return false;
     if (playMode === 'engine' && currentTurn !== playerColor) return false;
     try {
       const pos = buildPosition();
@@ -374,6 +467,16 @@ function HomeInner() {
       setPlayHistory(h => [...h, fen]);
       setFen(nextFen);
       setLastMove({ from: sourceSquare, to: targetSquare });
+      // Grade player's move
+      try {
+        const uci = moveToUci(move as Move);
+        if (uci) {
+          void (async () => {
+            const graded = await gradeMove(fen, uci);
+            if (graded) { setLastTag(graded.tag); setLastCpl(graded.cpl); }
+          })();
+        }
+      } catch {}
       void (async () => { const cp = await analyzeFenToCp(nextFen); if (cp !== null) setCurrentCp(cp); })();
       playMoveSound();
       // record SAN and FEN
@@ -386,41 +489,70 @@ function HomeInner() {
     } catch {
       return false;
     }
-  }, [playMode, thinking, buildPosition, fen, currentTurn, playerColor, playMoveSound, analyzeFenToCp]);
+  }, [playMode, thinking, buildPosition, fen, currentTurn, playerColor, playMoveSound, analyzeFenToCp, gradeMove, moveToUci]);
 
   const newGame = useCallback(() => {
     setPlayHistory([]);
     setFen("startpos");
+    setLastMove(null);
+    setLastGameFens([]);
+    setLastGameSans([]);
+    setShowReviewBanner(false);
+    prevGameOverRef.current = false;
+    setBestMove(null);
+    setScore(null);
+    setPv(null);
+    setCurrentCp(null);
+    setBlunders([]);
+    setSeries([]);
+    setMoves([]);
+    setPly(0);
+    setPgn("");
+    setPendingPromotion(null);
+    setThinking(false);
   }, []);
 
   // Auto-trigger engine move only when it's the engine's turn
   useEffect(() => {
-    if (playMode !== 'engine') return;
+    if (playMode !== 'engine' && playMode !== 'engveng') return;
     if (engineOk === false) return;
     if (thinking) return;
-    if (currentTurn !== playerColor) {
+    if (playMode === 'engine') {
+      if (currentTurn !== playerColor) {
+        void engineReply();
+      }
+    } else {
+      // Engine vs Engine: always let engine move
       void engineReply();
     }
   }, [fen, currentTurn, playMode, playerColor, thinking, engineOk, engineReply]);
 
-  // Detect game over transition to trigger review banner and stub analysis
+  // Detect game over transition to trigger review banner and async report generation
   useEffect(() => {
     if (positionStatus.gameOver && !prevGameOverRef.current) {
       setShowReviewBanner(true);
+      setGeneratingReport(true);
+      setReportId(null);
       // Trigger background batch analysis
       const run = async () => {
         try {
-          await fetch('/api/report/generate', {
+          const res = await fetch('/api/report/generate', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ fens: lastGameFens, sans: lastGameSans, depth, elo })
+            body: JSON.stringify({ fens: lastGameFens, sans: lastGameSans, pgn: formatSanAsPgn(lastGameSans), depth, elo, multiPv: 2 })
           });
-          // ignore result for now; /report/latest will pick it up
+          if (res.ok) {
+            const j = await res.json().catch(() => ({}));
+            if (j && typeof j.id === 'string') setReportId(j.id);
+          }
         } catch {}
+        finally {
+          setGeneratingReport(false);
+        }
       };
       void run();
     }
     prevGameOverRef.current = positionStatus.gameOver;
-  }, [positionStatus.gameOver, lastGameFens, lastGameSans, depth, elo]);
+  }, [positionStatus.gameOver, lastGameFens, lastGameSans, depth, elo, formatSanAsPgn]);
 
   const undo = useCallback(() => {
     setPlayHistory(h => {
@@ -456,6 +588,16 @@ function HomeInner() {
       setPlayHistory(h => [...h, fen]);
       setFen(nextFen);
       setLastMove({ from: fromStr, to: toStr });
+      // Grade promotion move
+      try {
+        const uci = moveToUci(mv as Move);
+        if (uci) {
+          void (async () => {
+            const graded = await gradeMove(fen, uci);
+            if (graded) { setLastTag(graded.tag); setLastCpl(graded.cpl); }
+          })();
+        }
+      } catch {}
       void (async () => { const cp = await analyzeFenToCp(nextFen); if (cp !== null) setCurrentCp(cp); })();
       playMoveSound();
       try {
@@ -464,7 +606,7 @@ function HomeInner() {
       } catch {}
       setLastGameFens(arr => [...arr, nextFen]);
     } catch {}
-  }, [pendingPromotion, buildPosition, fen, playMoveSound, analyzeFenToCp]);
+  }, [pendingPromotion, buildPosition, fen, playMoveSound, analyzeFenToCp, gradeMove, moveToUci]);
 
   // Map difficulty presets to depth
   useEffect(() => {
@@ -480,19 +622,19 @@ function HomeInner() {
         <div className="w-full max-w-[480px] flex gap-3 items-start">
           {/* Minimalist eval bar on the LEFT */}
           <div className="w-8 h-[384px] md:h-[480px] border rounded overflow-hidden flex flex-col">
-            <div className="bg-white" style={{ height: `${cpToWhitePercent(currentCp)}%`, transition: 'height 0.4s ease-in-out' }} />
-            <div className="bg-black" style={{ height: `${100 - cpToWhitePercent(currentCp)}%`, transition: 'height 0.4s ease-in-out' }} />
+            <div className="bg-white" style={{ height: `${cpToWhitePercent(whiteCp)}%`, transition: 'height 0.4s ease-in-out' }} />
+            <div className="bg-black" style={{ height: `${100 - cpToWhitePercent(whiteCp)}%`, transition: 'height 0.4s ease-in-out' }} />
           </div>
           {/* Board */}
           <div>
-            <Chessboard options={{ position: fen === "startpos" ? undefined : fen, allowDragging: playMode !== 'off' && !thinking && !positionStatus.gameOver, squareStyles, onPieceDrop: ({ sourceSquare, targetSquare }) => onPieceDrop({ sourceSquare, targetSquare: targetSquare || sourceSquare }) }} />
+            <Chessboard options={{ position: fen === "startpos" ? undefined : fen, allowDragging: (playMode !== 'off' && playMode !== 'engveng' && !thinking && !positionStatus.gameOver), squareStyles, onPieceDrop: ({ sourceSquare, targetSquare }) => onPieceDrop({ sourceSquare, targetSquare: targetSquare || sourceSquare }) }} />
             {positionStatus.gameOver && (
               <div className="mt-2 text-sm font-semibold text-red-600">{positionStatus.outcomeText}</div>
             )}
             {showReviewBanner && (
               <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded text-sm flex items-center justify-between">
-                <span>Game finished. Review the most recent game?</span>
-                <a href="/report/latest" className="px-2 py-1 rounded bg-blue-600 text-white">Review</a>
+                <span>Game finished. {generatingReport ? 'Generating review…' : 'Review the most recent game?'}</span>
+                <a href={reportId ? `/report/${reportId}` : "/report/latest"} className={`px-2 py-1 rounded ${generatingReport? 'bg-gray-300' : 'bg-blue-600'} text-white`} aria-disabled={generatingReport}>{generatingReport? 'Please wait' : 'Review'}</a>
               </div>
             )}
             {pendingPromotion && (
@@ -594,11 +736,12 @@ function HomeInner() {
             {engineOk === false && <span className="text-xs text-red-600">Engine NOT READY{engineReqId ? ` (${engineReqId})` : ''}</span>}
             <select className="border rounded px-2 py-1 text-sm" value={playMode} onChange={(e)=>{
               const v = e.target.value;
-              if (v === 'off' || v === 'engine' || v === 'hotseat') setPlayMode(v);
+              if (v === 'off' || v === 'engine' || v === 'hotseat' || v === 'engveng') setPlayMode(v as 'off'|'engine'|'hotseat'|'engveng');
             }}>
               <option value="off">Player mode: off</option>
               <option value="engine">Play vs Engine</option>
               <option value="hotseat">Two-player (local)</option>
+              <option value="engveng">Engine vs Engine</option>
             </select>
             <select className="border rounded px-2 py-1 text-sm" value={playerColor} onChange={(e)=>{
               const v = e.target.value;

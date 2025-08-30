@@ -2,9 +2,9 @@ import { spawn, ChildProcessWithoutNullStreams } from "child_process";
 import fs from "fs";
 import { logger } from "@/lib/logger";
 
-export type AnalyzeParams = { fen: string; depth: number; elo?: number; limitStrength?: boolean };
+export type AnalyzeParams = { fen: string; depth: number; elo?: number; limitStrength?: boolean; searchMoves?: string[]; multiPv?: number };
 export type AnalyzeInfo = { depth?: number; seldepth?: number; multipv?: number; score?: { type: "cp"|"mate"; value: number }; nodes?: number; nps?: number; timeMs?: number; pv?: string[] };
-export type AnalyzeResult = { bestmove: string | null; info: AnalyzeInfo | null; raw: string[]; reqId: string };
+export type AnalyzeResult = { bestmove: string | null; info: AnalyzeInfo | null; infos?: AnalyzeInfo[]; raw: string[]; reqId: string };
 
 function isExecutable(p: string): boolean { try { fs.accessSync(p, fs.constants.X_OK); return true; } catch { return false; } }
 function findStockfishBinary(): string {
@@ -47,10 +47,16 @@ class EnginePoolImpl {
     return { ready: this.ready, busy: this.busy, pid: this.engine?.pid ?? null, lastStdout: this.lastStdoutLines.slice(-10) };
   }
 
+  private backoffMs = 0;
+
   private ensureStarted() {
     if (this.engine) return;
     const bin = findStockfishBinary();
     const reqId = `start-${Date.now()}`;
+    if (this.backoffMs > 0) {
+      const until = Date.now() + this.backoffMs;
+      while (Date.now() < until) { /* simple sync backoff */ }
+    }
     this.engine = spawn(bin);
     this.ready = false;
     logger.info({ reqId, bin, pid: this.engine.pid }, "enginePool:spawned");
@@ -70,8 +76,8 @@ class EnginePoolImpl {
     };
     this.engine.stdout.on("data", onData);
     this.engine.stderr.on("data", (c: Buffer) => logger.warn({ err: c.toString("utf8") }, "enginePool:stderr"));
-    this.engine.on("error", () => { this.reset(); });
-    this.engine.on("close", (code, signal) => { logger.warn({ code, signal }, "enginePool:closed"); this.reset(); });
+    this.engine.on("error", () => { this.bumpBackoff(); this.reset(); });
+    this.engine.on("close", (code, signal) => { logger.warn({ code, signal }, "enginePool:closed"); this.bumpBackoff(); this.reset(); });
     try { this.engine.stdin.write("uci\n"); } catch {}
   }
 
@@ -81,8 +87,13 @@ class EnginePoolImpl {
     while (this.queue.length) { const q = this.queue.shift()!; q.reject(new Error("Engine unavailable")); }
   }
 
+  private bumpBackoff() {
+    // Exponential backoff up to 2s
+    this.backoffMs = Math.min(2000, this.backoffMs > 0 ? this.backoffMs * 2 : 200);
+  }
+
   public analyze(params: AnalyzeParams): Promise<AnalyzeResult> {
-    const key = `${params.fen}|d${params.depth}|e${params.elo ?? "-"}`;
+    const key = `${params.fen}|d${params.depth}|e${params.elo ?? "-"}|sm${params.searchMoves?.join(',') ?? '-'}|mpv${params.multiPv ?? 1}`;
     const now = Date.now();
     const existing = this.activeDedupe.get(key);
     if (existing && now - existing.ts < 5000) return existing.promise;
@@ -102,25 +113,48 @@ class EnginePoolImpl {
     const { params, resolve, reject, reqId } = job;
     logger.debug({ reqId, params }, "enginePool:job_start");
     let bestmove: string | null = null; let bestInfo: AnalyzeInfo | null = null; const infoLines: string[] = [];
+    const multiMap = new Map<number, AnalyzeInfo>();
     const onData = (chunk: Buffer) => {
       const text = chunk.toString("utf8");
       for (const line of text.split(/\r?\n/)) {
         if (!line) continue;
-        if (line.startsWith("info ")) { infoLines.push(line); const parsed = parseInfoLine(line); if (parsed && (parsed.multipv === undefined || parsed.multipv === 1)) bestInfo = parsed; }
+        if (line.startsWith("info ")) {
+          infoLines.push(line);
+          const parsed = parseInfoLine(line);
+          if (parsed) {
+            if (parsed.multipv != null) {
+              multiMap.set(parsed.multipv, parsed);
+              if (parsed.multipv === 1) bestInfo = parsed;
+            } else {
+              bestInfo = parsed;
+            }
+          }
+        }
         if (line.startsWith("bestmove ")) { bestmove = line.split(" ")[1]; finish(); }
       }
     };
     const finish = () => {
       try { this.engine!.stdout.off("data", onData); } catch {}
-      const result: AnalyzeResult = { bestmove, info: bestInfo, raw: infoLines.slice(-10), reqId };
+      const infosArr: AnalyzeInfo[] | undefined = multiMap.size > 0
+        ? Array.from([...multiMap.entries()].sort((a,b)=>a[0]-b[0]).map(([,v])=>v))
+        : undefined;
+      const result: AnalyzeResult = { bestmove, info: bestInfo, infos: infosArr, raw: infoLines.slice(-50), reqId };
       logger.info({ reqId, bestmove }, "enginePool:job_done");
       this.busy = false; resolve(result); setImmediate(() => this.pump());
     };
     this.engine.stdout.on("data", onData);
     try {
+      // Hardening: conservative defaults
+      this.engine.stdin.write(`setoption name Threads value 1\n`);
+      this.engine.stdin.write(`setoption name Hash value 16\n`);
       if (params.limitStrength) { this.engine.stdin.write(`setoption name UCI_LimitStrength value true\n`); if (params.elo) this.engine.stdin.write(`setoption name UCI_Elo value ${params.elo}\n`); }
+      const desiredMulti = Math.max(1, Math.min(2, params.multiPv ?? 1));
+      this.engine.stdin.write(`setoption name MultiPV value ${desiredMulti}\n`);
       this.engine.stdin.write(`position fen ${params.fen}\n`);
-      this.engine.stdin.write(`go depth ${params.depth}\n`);
+      const goCmd = params.searchMoves && params.searchMoves.length > 0
+        ? `go depth ${params.depth} searchmoves ${params.searchMoves.join(' ')}`
+        : `go depth ${params.depth}`;
+      this.engine.stdin.write(`${goCmd}\n`);
     } catch {
       try { this.engine.stdout.off("data", onData); } catch {}
       this.busy = false; reject(new Error("Engine write failed")); setImmediate(() => this.pump());

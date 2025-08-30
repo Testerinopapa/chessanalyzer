@@ -19,3 +19,24 @@ jobs:
       - run: npm run lint -- --max-warnings=0
       - run: npm run build
 
+  caps1-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+      - name: Install Stockfish
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends stockfish
+      - run: npm ci
+      - run: npm run build
+      - name: Start server
+        run: |
+          PORT=3000 npm start &
+          for i in `seq 1 30`; do curl -sSf http://localhost:3000 >/dev/null && break || sleep 1; done
+      - name: CAPS1 smoke + snapshots
+        run: npm run test:caps1
+      - name: CAPS1 stability
+        run: npm run test:caps1:stability
+
