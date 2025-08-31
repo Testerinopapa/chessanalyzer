@@ -20,6 +20,8 @@ type GenerateRequest = {
   multiPv?: number;
   debug?: boolean;
   pgn?: string;
+  result?: "1-0" | "0-1" | "1/2-1/2";
+  startFen?: string;
 };
 
 function scoreToCp(s: { type: "cp" | "mate"; value: number } | undefined): number | null {
@@ -50,8 +52,10 @@ export async function POST(req: NextRequest) {
   const debug = !!body.debug;
   // If PGN provided, derive fens/sans from it when arrays missing
   if ((!fens.length || !sans.length || fens.length !== sans.length) && typeof body.pgn === 'string' && body.pgn.trim().length > 0) {
+    const raw = body.pgn;
+    let parsedOk = false;
     try {
-      const games = parsePgn(body.pgn);
+      const games = parsePgn(raw);
       if (games.length > 0) {
         const game = games[0];
         const startRes = startingPosition(game.headers);
@@ -67,15 +71,45 @@ export async function POST(req: NextRequest) {
             outFens.push(makeFen(pos.toSetup()));
           }
           if (outSans.length && outSans.length === outFens.length) {
-            sans = outSans; fens = outFens;
+            sans = outSans; fens = outFens; parsedOk = true;
           }
         }
       }
     } catch {}
+    // Fallback: naive SAN tokenization if structured PGN parse failed
+    if (!parsedOk) {
+      try {
+        const startPos = body.startFen ? parseFen(body.startFen).unwrap() : defaultPosition("chess");
+        // strip headers and results, comments and NAGs
+        const cleaned = raw
+          .replace(/\{[^}]*\}/g, ' ')  // comments
+          .replace(/;.*$/gm, ' ')        // line comments
+          .replace(/\(.*?\)/g, ' ')     // variations
+          .replace(/\d+\.\.\./g, ' ') // move numbers for black
+          .replace(/\d+\./g, ' ')       // move numbers for white
+          .replace(/1-0|0-1|1\/2-1\/2|\*/g, ' ') // results
+          .replace(/\$\d+/g, ' ')       // NAGs
+          .trim();
+        const tokens = cleaned.split(/\s+/).filter(Boolean);
+        const pos = setupPosition("chess", startPos).unwrap();
+        const outSans: string[] = [];
+        const outFens: string[] = [];
+        for (const san of tokens) {
+          const mv = parseSan(pos, san);
+          if (!mv) break;
+          pos.play(mv);
+          outSans.push(san);
+          outFens.push(makeFen(pos.toSetup()));
+        }
+        if (outSans.length && outSans.length === outFens.length) {
+          sans = outSans; fens = outFens; parsedOk = true;
+        }
+      } catch {}
+    }
   }
 
   if (!fens.length || !sans.length) {
-    return NextResponse.json({ error: "No moves provided (empty fens/sans and no PGN)" }, { status: 400 });
+    return NextResponse.json({ error: "No moves provided (empty fens/sans and PGN parse failed)" }, { status: 422 });
   }
   if (sans.length !== fens.length) {
     // Be tolerant: trim to the shorter length
@@ -180,8 +214,8 @@ export async function POST(req: NextRequest) {
   const avgCpl = cpls.length > 0 ? sumCplPawns / cpls.length : 0;
   const accuracy = Math.max(0, Math.min(100, 100 - (avgCpl / 8) * 100));
 
-  // Determine result from final position
-  let resultStr = "*";
+  // Determine result from final position, allow override via request
+  let resultStr = typeof body.result === 'string' ? body.result : "*";
   try {
     const lastFen = fens[fens.length - 1] ?? INITIAL_FEN;
     const setupRes = parseFen(lastFen);

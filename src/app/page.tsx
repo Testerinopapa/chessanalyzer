@@ -512,6 +512,22 @@ function HomeInner() {
     setThinking(false);
   }, []);
 
+  // Forfeit: declare immediate result and send report
+  const forfeit = useCallback((winner: 'white'|'black') => {
+    setThinking(false);
+    setShowReviewBanner(true);
+    const result = winner === 'white' ? '1-0' : '0-1';
+    const run = async () => {
+      try {
+        await fetch('/api/report/generate', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fens: lastGameFens, sans: lastGameSans, depth, elo, result })
+        });
+      } catch {}
+    };
+    void run();
+  }, [lastGameFens, lastGameSans, depth, elo]);
+
   // Auto-trigger engine move only when it's the engine's turn
   useEffect(() => {
     if (playMode !== 'engine' && playMode !== 'engveng') return;
@@ -622,8 +638,8 @@ function HomeInner() {
         <div className="w-full max-w-[480px] flex gap-3 items-start">
           {/* Minimalist eval bar on the LEFT */}
           <div className="w-8 h-[384px] md:h-[480px] border rounded overflow-hidden flex flex-col">
-            <div className="bg-white" style={{ height: `${cpToWhitePercent(whiteCp)}%`, transition: 'height 0.4s ease-in-out' }} />
-            <div className="bg-black" style={{ height: `${100 - cpToWhitePercent(whiteCp)}%`, transition: 'height 0.4s ease-in-out' }} />
+            <div style={{ backgroundColor: 'var(--eval-white)', height: `${cpToWhitePercent(whiteCp)}%`, transition: 'height 0.4s ease-in-out' }} />
+            <div style={{ backgroundColor: 'var(--eval-black)', height: `${100 - cpToWhitePercent(whiteCp)}%`, transition: 'height 0.4s ease-in-out' }} />
           </div>
           {/* Board */}
           <div>
@@ -751,6 +767,9 @@ function HomeInner() {
               <option value="black">Black</option>
             </select>
             <button className="px-2 py-1 rounded bg-gray-100" onClick={newGame} disabled={playMode==='off'}>New game</button>
+            {/* Forfeit buttons */}
+            <button className="px-2 py-1 rounded bg-red-100 text-red-700" onClick={() => forfeit('white')} disabled={playMode==='off'}>Forfeit (White wins)</button>
+            <button className="px-2 py-1 rounded bg-red-100 text-red-700" onClick={() => forfeit('black')} disabled={playMode==='off'}>Forfeit (Black wins)</button>
             <button className="px-2 py-1 rounded bg-gray-100" onClick={undo} disabled={playHistory.length===0}>Undo</button>
             {playMode==='engine' && <button className="px-2 py-1 rounded bg-gray-100" onClick={undoEngine} disabled={playHistory.length<2}>Undo 2</button>}
             {thinking && <span className="text-xs text-gray-500">Engine thinking…</span>}

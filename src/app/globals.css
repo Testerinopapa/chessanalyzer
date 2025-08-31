@@ -1,8 +1,13 @@
 @import "tailwindcss";
 
-:root {
+[data-theme="light"] {
   --background: #ffffff;
   --foreground: #171717;
+  --surface: #f3f4f6; /* gray-100 */
+  --on-surface: #111827; /* gray-900 */
+  --muted: #6b7280; /* gray-500 */
+  --eval-white: #f9fafb; /* gray-50 */
+  --eval-black: #111827; /* gray-900 */
 }
 
 @theme inline {
@@ -12,15 +17,45 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+[data-theme="dark"] {
+  --background: #0a0a0a;
+  --foreground: #ededed;
+  --surface: #111827; /* gray-900 */
+  --on-surface: #e5e7eb; /* gray-200 */
+  --muted: #cbd5e1; /* slate-300 */
+  --eval-white: #e5e7eb; /* gray-200 */
+  --eval-black: #0b0b0b; /* near-black */
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+/* Dark mode overrides for common utility backgrounds to keep contrast */
+[data-theme="dark"] .bg-white { background-color: #111827 !important; } /* gray-900 */
+[data-theme="dark"] .bg-gray-100 { background-color: #111827 !important; }
+[data-theme="dark"] .bg-gray-200 { background-color: #1f2937 !important; } /* gray-800 */
+
+/* Text contrast adjustments */
+[data-theme="dark"] .text-gray-500 { color: #e5e7eb !important; } /* gray-200 */
+
+/* Tag/badge adjustments (yellow on dark) */
+[data-theme="dark"] .bg-yellow-100 { background-color: #374151 !important; } /* gray-700 as pill */
+[data-theme="dark"] .text-yellow-800 { color: #fde68a !important; } /* yellow-300 */
+
+/* Buttons using surface backgrounds can opt-in via .btn-surface */
+.btn-surface { background-color: var(--surface); color: var(--on-surface); }
+.btn-surface:hover { filter: brightness(1.05); }
+
+/* Inputs/selects with themed surface */
+.input-surface {
+  background-color: var(--surface);
+  color: var(--on-surface);
+  border: 1px solid rgba(127,127,127,0.35);
+}
+.input-surface:focus {
+  outline: 2px solid rgba(59,130,246,0.55);
+  outline-offset: 1px;
 }
