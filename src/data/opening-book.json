@@ -1,0 +1,23 @@
+[
+  {
+    "eco": "C60",
+    "name": "Ruy Lopez: General",
+    "plies": 4,
+    "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+    "moves": [
+      { "uci": "e7e5", "weight": 70 },
+      { "uci": "c7c5", "weight": 25 }
+    ]
+  },
+  {
+    "eco": "C60",
+    "name": "Ruy Lopez: General",
+    "plies": 6,
+    "fen": "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 1 2",
+    "moves": [
+      { "uci": "f1b5", "weight": 55 },
+      { "uci": "d2d4", "weight": 20 },
+      { "uci": "c2c3", "weight": 15 }
+    ]
+  }
+]

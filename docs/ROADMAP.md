@@ -24,6 +24,7 @@ This document captures the near-term directions we can take, with concrete deliv
   - “Blunder alerts” from eval deltas; mini annotations (?!, ??)
   - Opening book for first N moves (skip engine early)
   - Export analyzed PGN with comments (score, PV per move)
+  - Move grading parity with CAPS1-level metrics (see `docs/issues/move-grading-caps1.md`)
 - Assumptions
   - Users want quick visual cues (blunders, swings) before deep dives
 - Risks
