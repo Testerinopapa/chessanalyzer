@@ -12,7 +12,8 @@ import { FILE_NAMES, RANK_NAMES } from "chessops";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { GameModeId } from "@/types/gameModes";
 import { GAME_MODES_PRESETS } from "@/types/gameModes";
-import { getEngineParams, shouldEngineMove } from "@/lib/gameRules";
+// (reserved for future use) import { getEngineParams, shouldEngineMove } from "@/lib/gameRules";
+import { Clock } from "@/components/Clock";
 
 const Chessboard = dynamic(() => import("react-chessboard").then(m => m.Chessboard), { ssr: false });
 
@@ -59,49 +60,7 @@ function HomeInner() {
   const [reportId, setReportId] = useState<string | null>(null);
   const prevGameOverRef = useRef(false);
 
-  // Timers
-  const [whiteMs, setWhiteMs] = useState<number>(0);
-  const [blackMs, setBlackMs] = useState<number>(0);
-  const timeoutHandledRef = useRef(false);
-  useEffect(() => {
-    if (rules.time) {
-      setWhiteMs(rules.time.whiteMs);
-      setBlackMs(rules.time.blackMs);
-      timeoutHandledRef.current = false;
-    } else {
-      setWhiteMs(0); setBlackMs(0); timeoutHandledRef.current = false;
-    }
-  }, [rules.time]);
-  const applyIncrement = useCallback((moved: "white"|"black") => {
-    const inc = rules.time?.incrementMs ?? 0;
-    if (inc > 0) {
-      if (moved === 'white') setWhiteMs(ms => ms + inc);
-      else setBlackMs(ms => ms + inc);
-    }
-  }, [rules.time]);
-  useEffect(() => {
-    if (!rules.time) return;
-    if (positionStatus.gameOver) return;
-    let raf = 0;
-    let prev = performance.now();
-    const tick = () => {
-      const now = performance.now();
-      const delta = now - prev; prev = now;
-      if (currentTurn === 'white') setWhiteMs(ms => Math.max(0, ms - delta));
-      else setBlackMs(ms => Math.max(0, ms - delta));
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => { try { cancelAnimationFrame(raf); } catch {} };
-  }, [rules.time, currentTurn, positionStatus.gameOver]);
-  useEffect(() => {
-    if (!rules.time) return;
-    if (positionStatus.gameOver) return;
-    if (!timeoutHandledRef.current) {
-      if (whiteMs <= 0) { timeoutHandledRef.current = true; forfeit('black'); }
-      else if (blackMs <= 0) { timeoutHandledRef.current = true; forfeit('white'); }
-    }
-  }, [whiteMs, blackMs, rules.time, positionStatus.gameOver, forfeit]);
+  // Timers moved below to avoid use-before-declare lint
   const handleAnalyzeServer = useCallback(async () => {
     setLoading(true);
     setBestMove(null);
@@ -441,59 +400,7 @@ function HomeInner() {
     return parts.join(' ') + ' *';
   }, []);
 
-  const engineReply = useCallback(async () => {
-    setThinking(true);
-    try {
-      if (rules.time && (whiteMs <= 0 || blackMs <= 0)) return;
-      const fenForEngine = fen === "startpos" ? startFen : fen;
-      // If engine is not to move in engine mode, do nothing
-      if (rules.opponent === 'engine' && currentTurn === playerColor) return;
-      if (rules.opponent === 'enginevengine' && positionStatus.gameOver) return;
-      if (positionStatus.gameOver) return;
-      const res = await fetch("/api/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fen: fenForEngine, depth, elo: elo ?? undefined, limitStrength: elo != null }) });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        setErrorMsg(`Engine error: ${err?.error || res.status}`);
-        return;
-      }
-      const movedSide: 'white'|'black' = currentTurn;
-      const json = await res.json();
-      const uci: string | undefined = json?.bestmove;
-      if (!uci) return;
-      const nextFen = applyMoveUci(fenForEngine, uci);
-      if (nextFen) {
-        setPlayHistory(h => [...h, fen]);
-        setFen(nextFen);
-        const mv = parseUci(uci) as Move | undefined;
-        if (mv && isNormal(mv)) {
-          setLastMove({ from: squareToName(mv.from), to: squareToName(mv.to) });
-          // compute SAN from previous position
-          const setupRes = parseFen(fenForEngine);
-          if (setupRes.isOk) {
-            const resPos = setupPosition("chess", setupRes.unwrap());
-            if (resPos.isOk) {
-              const p = resPos.unwrap();
-              const san = makeSan(p, mv);
-              setLastGameSans(arr => [...arr, san]);
-            }
-          }
-        }
-        // Grade the engine's move using pre-move fen and played UCI
-        void (async () => {
-          const graded = await gradeMove(fenForEngine, uci);
-          if (graded) { setLastTag(graded.tag); setLastCpl(graded.cpl); }
-        })();
-        const cp = await analyzeFenToCp(nextFen);
-        if (cp !== null) setCurrentCp(cp);
-        playMoveSound();
-        // increment after move
-        applyIncrement(movedSide);
-        setLastGameFens(arr => [...arr, nextFen]);
-      }
-    } finally {
-      setThinking(false);
-    }
-  }, [fen, depth, applyMoveUci, startFen, currentTurn, playerColor, positionStatus.gameOver, elo, squareToName, rules.opponent, playMoveSound, analyzeFenToCp, gradeMove]);
+  
 
   const onPieceDrop = useCallback(({ sourceSquare, targetSquare }: { sourceSquare: string; targetSquare: string; }): boolean => {
     if (rules.opponent === 'enginevengine' || thinking) return false;
@@ -582,20 +489,95 @@ function HomeInner() {
     void run();
   }, [lastGameFens, lastGameSans, depth, elo]);
 
+  // Timers
+  const [whiteMs, setWhiteMs] = useState<number>(0);
+  const [blackMs, setBlackMs] = useState<number>(0);
+  const timeoutHandledRef = useRef(false);
+  useEffect(() => {
+    if (rules.time) {
+      setWhiteMs(rules.time.whiteMs);
+      setBlackMs(rules.time.blackMs);
+      timeoutHandledRef.current = false;
+    } else {
+      setWhiteMs(0); setBlackMs(0); timeoutHandledRef.current = false;
+    }
+  }, [rules.time]);
+  const applyIncrement = useCallback((moved: "white"|"black") => {
+    const inc = rules.time?.incrementMs ?? 0;
+    if (inc > 0) {
+      if (moved === 'white') setWhiteMs(ms => ms + inc);
+      else setBlackMs(ms => ms + inc);
+    }
+  }, [rules.time]);
+  useEffect(() => {
+    if (!rules.time) return;
+    if (positionStatus.gameOver) return;
+    let raf = 0;
+    let prev = performance.now();
+    const tick = () => {
+      const now = performance.now();
+      const delta = now - prev; prev = now;
+      if (currentTurn === 'white') setWhiteMs(ms => Math.max(0, ms - delta));
+      else setBlackMs(ms => Math.max(0, ms - delta));
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => { try { cancelAnimationFrame(raf); } catch {} };
+  }, [rules.time, currentTurn, positionStatus.gameOver]);
+  useEffect(() => {
+    if (!rules.time) return;
+    if (positionStatus.gameOver) return;
+    if (!timeoutHandledRef.current) {
+      if (whiteMs <= 0) { timeoutHandledRef.current = true; forfeit('black'); }
+      else if (blackMs <= 0) { timeoutHandledRef.current = true; forfeit('white'); }
+    }
+  }, [whiteMs, blackMs, rules.time, positionStatus.gameOver, forfeit]);
+
   // Auto-trigger engine move only when it's the engine's turn
   useEffect(() => {
     if (rules.opponent !== 'engine' && rules.opponent !== 'enginevengine') return;
     if (engineOk === false) return;
     if (thinking) return;
+    const run = async () => {
+      // inline engine reply to avoid dependency issues
+      try {
+        if (rules.time && (whiteMs <= 0 || blackMs <= 0)) return;
+        const fenForEngine = fen === "startpos" ? startFen : fen;
+        if (rules.opponent === 'engine' && currentTurn === playerColor) return;
+        if (rules.opponent === 'enginevengine' && positionStatus.gameOver) return;
+        if (positionStatus.gameOver) return;
+        const res = await fetch("/api/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fen: fenForEngine, depth, elo: elo ?? undefined, limitStrength: elo != null }) });
+        if (!res.ok) return;
+        const movedSide: 'white'|'black' = currentTurn;
+        const json = await res.json();
+        const uci: string | undefined = json?.bestmove;
+        if (!uci) return;
+        const nextFen = applyMoveUci(fenForEngine, uci);
+        if (!nextFen) return;
+        setPlayHistory(h => [...h, fen]);
+        setFen(nextFen);
+        const mv = parseUci(uci) as Move | undefined;
+        if (mv && isNormal(mv)) {
+          setLastMove({ from: squareToName(mv.from), to: squareToName(mv.to) });
+          const setupRes = parseFen(fenForEngine);
+          if (setupRes.isOk) {
+            const resPos = setupPosition("chess", setupRes.unwrap());
+            if (resPos.isOk) setLastGameSans(arr => [...arr, makeSan(resPos.unwrap(), mv)]);
+          }
+        }
+        void (async () => { const graded = await gradeMove(fenForEngine, uci); if (graded) { setLastTag(graded.tag); setLastCpl(graded.cpl); } })();
+        const cp = await analyzeFenToCp(nextFen); if (cp !== null) setCurrentCp(cp);
+        playMoveSound();
+        applyIncrement(movedSide);
+        setLastGameFens(arr => [...arr, nextFen]);
+      } catch {}
+    };
     if (rules.opponent === 'engine') {
-      if (currentTurn !== playerColor) {
-        void engineReply();
-      }
+      if (currentTurn !== playerColor) void run();
     } else {
-      // Engine vs Engine: always let engine move
-      void engineReply();
+      void run();
     }
-  }, [fen, currentTurn, rules.opponent, playerColor, thinking, engineOk, engineReply]);
+  }, [fen, currentTurn, rules.opponent, playerColor, thinking, engineOk, rules.time, whiteMs, blackMs, startFen, positionStatus.gameOver, depth, elo, applyMoveUci, squareToName, gradeMove, analyzeFenToCp, playMoveSound, applyIncrement]);
 
   // Detect game over transition to trigger review banner and async report generation
   useEffect(() => {
