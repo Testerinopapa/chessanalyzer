@@ -14,6 +14,8 @@ import type { GameModeId } from "@/types/gameModes";
 import { GAME_MODES_PRESETS } from "@/types/gameModes";
 // (reserved for future use) import { getEngineParams, shouldEngineMove } from "@/lib/gameRules";
 import { Clock } from "@/components/Clock";
+import { makeOpponentPolicy } from "@/lib/policies/opponent";
+import type { OpponentKind } from "@/lib/policies/types";
 
 const Chessboard = dynamic(() => import("react-chessboard").then(m => m.Chessboard), { ssr: false });
 
@@ -535,7 +537,8 @@ function HomeInner() {
 
   // Auto-trigger engine move only when it's the engine's turn
   useEffect(() => {
-    if (rules.opponent !== 'engine' && rules.opponent !== 'enginevengine') return;
+    const opponentPolicy = makeOpponentPolicy(rules.opponent as OpponentKind);
+    if (!opponentPolicy.shouldEngineMove({ turn: currentTurn, playerColor })) return;
     if (engineOk === false) return;
     if (thinking) return;
     const run = async () => {
@@ -572,11 +575,7 @@ function HomeInner() {
         setLastGameFens(arr => [...arr, nextFen]);
       } catch {}
     };
-    if (rules.opponent === 'engine') {
-      if (currentTurn !== playerColor) void run();
-    } else {
-      void run();
-    }
+    void run();
   }, [fen, currentTurn, rules.opponent, playerColor, thinking, engineOk, rules.time, whiteMs, blackMs, startFen, positionStatus.gameOver, depth, elo, applyMoveUci, squareToName, gradeMove, analyzeFenToCp, playMoveSound, applyIncrement]);
 
   // Detect game over transition to trigger review banner and async report generation
