@@ -482,6 +482,7 @@ function HomeInner() {
     const result = winner === 'white' ? '1-0' : '0-1';
     const run = async () => {
       try {
+        if (lastGameFens.length === 0 || lastGameSans.length === 0) return;
         await fetch('/api/report/generate', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ fens: lastGameFens, sans: lastGameSans, depth, elo, result })
@@ -495,13 +496,15 @@ function HomeInner() {
   const [whiteMs, setWhiteMs] = useState<number>(0);
   const [blackMs, setBlackMs] = useState<number>(0);
   const timeoutHandledRef = useRef(false);
+  const timersInitializedRef = useRef(false);
   useEffect(() => {
     if (rules.time) {
       setWhiteMs(rules.time.whiteMs);
       setBlackMs(rules.time.blackMs);
       timeoutHandledRef.current = false;
+      timersInitializedRef.current = true;
     } else {
-      setWhiteMs(0); setBlackMs(0); timeoutHandledRef.current = false;
+      setWhiteMs(0); setBlackMs(0); timeoutHandledRef.current = false; timersInitializedRef.current = false;
     }
   }, [rules.time]);
   const applyIncrement = useCallback((moved: "white"|"black") => {
@@ -528,6 +531,7 @@ function HomeInner() {
   }, [rules.time, currentTurn, positionStatus.gameOver]);
   useEffect(() => {
     if (!rules.time) return;
+    if (!timersInitializedRef.current) return;
     if (positionStatus.gameOver) return;
     if (!timeoutHandledRef.current) {
       if (whiteMs <= 0) { timeoutHandledRef.current = true; forfeit('black'); }
