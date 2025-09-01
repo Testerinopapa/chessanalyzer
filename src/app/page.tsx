@@ -60,6 +60,7 @@ function HomeInner() {
   const [generatingReport, setGeneratingReport] = useState(false);
   const [reportId, setReportId] = useState<string | null>(null);
   const prevGameOverRef = useRef(false);
+  const [orientation, setOrientation] = useState<"white"|"black">("white");
 
   // Timers moved below to avoid use-before-declare lint
   const handleAnalyzeServer = useCallback(async () => {
@@ -691,7 +692,10 @@ function HomeInner() {
           </div>
           {/* Board */}
           <div>
-            <Chessboard options={{ position: fen === "startpos" ? undefined : fen, allowDragging: (rules.opponent !== 'enginevengine' && !thinking && !positionStatus.gameOver), squareStyles, onPieceDrop: ({ sourceSquare, targetSquare }) => onPieceDrop({ sourceSquare, targetSquare: targetSquare || sourceSquare }) }} />
+            <Chessboard options={{ position: fen === "startpos" ? undefined : fen, allowDragging: (rules.opponent !== 'enginevengine' && !thinking && !positionStatus.gameOver), squareStyles, onPieceDrop: ({ sourceSquare, targetSquare }) => onPieceDrop({ sourceSquare, targetSquare: targetSquare || sourceSquare }), boardOrientation: orientation }} />
+            <div className="mt-2 flex gap-2">
+              <button className="px-2 py-1 rounded border" onClick={() => setOrientation((o: 'white'|'black') => o === 'white' ? 'black' : 'white')}>Flip board</button>
+            </div>
             {positionStatus.gameOver && (
               <div className="mt-2 text-sm font-semibold text-red-600">{positionStatus.outcomeText}</div>
             )}
