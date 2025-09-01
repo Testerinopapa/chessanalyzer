@@ -462,6 +462,9 @@ function HomeInner() {
         }
         return false;
       }
+      // Compute SAN BEFORE applying the move, so we don't depend on mutated position
+      let sanForRecord: string | null = null;
+      try { sanForRecord = makeSan(pos, move as Move); } catch { sanForRecord = null; }
       pos.play(move as Move);
       const nextFen = makeFen(pos.toSetup());
       setPlayHistory(h => [...h, fen]);
@@ -480,10 +483,9 @@ function HomeInner() {
       void (async () => { const cp = await analyzeFenToCp(nextFen); if (cp !== null) setCurrentCp(cp); })();
       playMoveSound();
       // record SAN and FEN
-      try {
-        const san = makeSan(pos, move as Move);
-        setLastGameSans(arr => [...arr, san]);
-      } catch {}
+      if (sanForRecord) {
+        try { setLastGameSans(arr => [...arr, sanForRecord!]); } catch {}
+      }
       setLastGameFens(arr => [...arr, nextFen]);
       return true;
     } catch {
@@ -599,6 +601,9 @@ function HomeInner() {
       if (from == null || to == null) return;
       const mv = { from, to, promotion: role } as Move;
       if (!pos.isLegal(mv)) return;
+      // Compute SAN BEFORE applying the promotion move
+      let sanForRecord: string | null = null;
+      try { sanForRecord = makeSan(pos, mv as Move); } catch { sanForRecord = null; }
       pos.play(mv);
       const nextFen = makeFen(pos.toSetup());
       setPlayHistory(h => [...h, fen]);
@@ -616,10 +621,9 @@ function HomeInner() {
       } catch {}
       void (async () => { const cp = await analyzeFenToCp(nextFen); if (cp !== null) setCurrentCp(cp); })();
       playMoveSound();
-      try {
-        const san = makeSan(pos, mv as Move);
-        setLastGameSans(arr => [...arr, san]);
-      } catch {}
+      if (sanForRecord) {
+        try { setLastGameSans(arr => [...arr, sanForRecord!]); } catch {}
+      }
       setLastGameFens(arr => [...arr, nextFen]);
     } catch {}
   }, [pendingPromotion, buildPosition, fen, playMoveSound, analyzeFenToCp, gradeMove, moveToUci]);
