@@ -59,6 +59,49 @@ function HomeInner() {
   const [reportId, setReportId] = useState<string | null>(null);
   const prevGameOverRef = useRef(false);
 
+  // Timers
+  const [whiteMs, setWhiteMs] = useState<number>(0);
+  const [blackMs, setBlackMs] = useState<number>(0);
+  const timeoutHandledRef = useRef(false);
+  useEffect(() => {
+    if (rules.time) {
+      setWhiteMs(rules.time.whiteMs);
+      setBlackMs(rules.time.blackMs);
+      timeoutHandledRef.current = false;
+    } else {
+      setWhiteMs(0); setBlackMs(0); timeoutHandledRef.current = false;
+    }
+  }, [rules.time]);
+  const applyIncrement = useCallback((moved: "white"|"black") => {
+    const inc = rules.time?.incrementMs ?? 0;
+    if (inc > 0) {
+      if (moved === 'white') setWhiteMs(ms => ms + inc);
+      else setBlackMs(ms => ms + inc);
+    }
+  }, [rules.time]);
+  useEffect(() => {
+    if (!rules.time) return;
+    if (positionStatus.gameOver) return;
+    let raf = 0;
+    let prev = performance.now();
+    const tick = () => {
+      const now = performance.now();
+      const delta = now - prev; prev = now;
+      if (currentTurn === 'white') setWhiteMs(ms => Math.max(0, ms - delta));
+      else setBlackMs(ms => Math.max(0, ms - delta));
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => { try { cancelAnimationFrame(raf); } catch {} };
+  }, [rules.time, currentTurn, positionStatus.gameOver]);
+  useEffect(() => {
+    if (!rules.time) return;
+    if (positionStatus.gameOver) return;
+    if (!timeoutHandledRef.current) {
+      if (whiteMs <= 0) { timeoutHandledRef.current = true; forfeit('black'); }
+      else if (blackMs <= 0) { timeoutHandledRef.current = true; forfeit('white'); }
+    }
+  }, [whiteMs, blackMs, rules.time, positionStatus.gameOver, forfeit]);
   const handleAnalyzeServer = useCallback(async () => {
     setLoading(true);
     setBestMove(null);
@@ -401,6 +444,7 @@ function HomeInner() {
   const engineReply = useCallback(async () => {
     setThinking(true);
     try {
+      if (rules.time && (whiteMs <= 0 || blackMs <= 0)) return;
       const fenForEngine = fen === "startpos" ? startFen : fen;
       // If engine is not to move in engine mode, do nothing
       if (rules.opponent === 'engine' && currentTurn === playerColor) return;
@@ -412,6 +456,7 @@ function HomeInner() {
         setErrorMsg(`Engine error: ${err?.error || res.status}`);
         return;
       }
+      const movedSide: 'white'|'black' = currentTurn;
       const json = await res.json();
       const uci: string | undefined = json?.bestmove;
       if (!uci) return;
@@ -441,6 +486,8 @@ function HomeInner() {
         const cp = await analyzeFenToCp(nextFen);
         if (cp !== null) setCurrentCp(cp);
         playMoveSound();
+        // increment after move
+        applyIncrement(movedSide);
         setLastGameFens(arr => [...arr, nextFen]);
       }
     } finally {
@@ -785,6 +832,11 @@ function HomeInner() {
             {rules.opponent==='engine' && <button className="px-2 py-1 rounded bg-gray-100" onClick={undoEngine} disabled={playHistory.length<2}>Undo 2</button>}
             {thinking && <span className="text-xs text-gray-500">Engine thinking…</span>}
           </div>
+          {rules.time && (
+            <div className="mt-2">
+              <Clock whiteMs={whiteMs} blackMs={blackMs} active={positionStatus.gameOver ? null : currentTurn} />
+            </div>
+          )}
           {errorMsg && (
             <div className="text-sm text-red-600">{errorMsg}</div>
           )}
