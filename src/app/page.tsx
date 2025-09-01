@@ -503,10 +503,17 @@ function HomeInner() {
       setBlackMs(rules.time.blackMs);
       timeoutHandledRef.current = false;
       timersInitializedRef.current = true;
+      // Reset banner state on mode/time change when starting fresh
+      if (lastGameSans.length === 0 && lastGameFens.length === 0) {
+        setShowReviewBanner(false);
+        setGeneratingReport(false);
+        setReportId(null);
+        prevGameOverRef.current = false;
+      }
     } else {
       setWhiteMs(0); setBlackMs(0); timeoutHandledRef.current = false; timersInitializedRef.current = false;
     }
-  }, [rules.time]);
+  }, [rules.time, lastGameSans.length, lastGameFens.length]);
   const applyIncrement = useCallback((moved: "white"|"black") => {
     const inc = rules.time?.incrementMs ?? 0;
     if (inc > 0) {
