@@ -79,7 +79,7 @@ export async function POST(req: NextRequest) {
     // Fallback: naive SAN tokenization if structured PGN parse failed
     if (!parsedOk) {
       try {
-        const startPos = body.startFen ? parseFen(body.startFen).unwrap() : defaultPosition("chess");
+        const startPos = body.startFen ? parseFen(body.startFen).unwrap() : defaultPosition("chess").toSetup();
         // strip headers and results, comments and NAGs
         const cleaned = raw
           .replace(/\{[^}]*\}/g, ' ')  // comments
