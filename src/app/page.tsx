@@ -14,8 +14,7 @@ import type { GameModeId } from "@/types/gameModes";
 import { GAME_MODES_PRESETS } from "@/types/gameModes";
 // (reserved for future use) import { getEngineParams, shouldEngineMove } from "@/lib/gameRules";
 import { Clock } from "@/components/Clock";
-import { makeOpponentPolicy } from "@/lib/policies/opponent";
-import type { OpponentKind } from "@/lib/policies/types";
+import { composePolicies } from "@/lib/policies";
 
 const Chessboard = dynamic(() => import("react-chessboard").then(m => m.Chessboard), { ssr: false });
 
@@ -548,14 +547,14 @@ function HomeInner() {
 
   // Auto-trigger engine move only when it's the engine's turn
   useEffect(() => {
-    const opponentPolicy = makeOpponentPolicy(rules.opponent as OpponentKind);
-    if (!opponentPolicy.shouldEngineMove({ turn: currentTurn, playerColor })) return;
+    const { opponent, time } = composePolicies({ opponent: rules.opponent, time: rules.time ?? null });
+    if (!opponent.shouldEngineMove({ turn: currentTurn, playerColor })) return;
     if (engineOk === false) return;
     if (thinking) return;
     const run = async () => {
       // inline engine reply to avoid dependency issues
       try {
-        if (rules.time && (whiteMs <= 0 || blackMs <= 0)) return;
+        if (time.hasTime && (whiteMs <= 0 || blackMs <= 0)) return;
         const fenForEngine = fen === "startpos" ? startFen : fen;
         if (rules.opponent === 'engine' && currentTurn === playerColor) return;
         if (rules.opponent === 'enginevengine' && positionStatus.gameOver) return;
