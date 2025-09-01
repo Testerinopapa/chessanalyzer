@@ -10,6 +10,8 @@ import type { Move, NormalMove, Role, Position } from "chessops";
 import { isNormal } from "chessops";
 import { FILE_NAMES, RANK_NAMES } from "chessops";
 import { useRouter, useSearchParams } from "next/navigation";
+import type { GameModeId } from "@/types/gameModes";
+import { GAME_MODES_PRESETS } from "@/types/gameModes";
 
 const Chessboard = dynamic(() => import("react-chessboard").then(m => m.Chessboard), { ssr: false });
 
@@ -33,8 +35,6 @@ function HomeInner() {
   type HistoryItem = { id: string; createdAt: string; pgn: string; depth: number; ply: number; fens: string; sans: string; series: string };
   const [history, setHistory] = useState<HistoryItem[]>([]);
   // Game mode integration
-  import type { GameModeId } from "@/types/gameModes";
-  import { GAME_MODES_PRESETS } from "@/types/gameModes";
   import { getEngineParams, shouldEngineMove } from "@/lib/gameRules";
   const [modeId, setModeId] = useState<GameModeId>('hotseat');
   const rules = useMemo(() => GAME_MODES_PRESETS[modeId], [modeId]);
