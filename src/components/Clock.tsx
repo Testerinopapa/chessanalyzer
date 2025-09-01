@@ -12,9 +12,15 @@ function formatMs(ms: number): string {
 export function Clock({ whiteMs, blackMs, active }: { whiteMs: number; blackMs: number; active: 'white'|'black'|null }) {
   return (
     <div className="flex items-center gap-3 text-sm">
-      <div className={`px-2 py-1 rounded border ${active==='white' ? 'bg-black text-white' : ''}`}>{formatMs(whiteMs)}</div>
+      <div className="flex items-center gap-1">
+        <span className="text-xs text-gray-500">W</span>
+        <div className={`px-2 py-1 rounded border ${active==='white' ? 'bg-black text-white' : ''}`}>{formatMs(whiteMs)}</div>
+      </div>
       <span className="text-gray-400">•</span>
-      <div className={`px-2 py-1 rounded border ${active==='black' ? 'bg-black text-white' : ''}`}>{formatMs(blackMs)}</div>
+      <div className="flex items-center gap-1">
+        <span className="text-xs text-gray-500">B</span>
+        <div className={`px-2 py-1 rounded border ${active==='black' ? 'bg-black text-white' : ''}`}>{formatMs(blackMs)}</div>
+      </div>
     </div>
   );
 }

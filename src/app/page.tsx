@@ -528,6 +528,7 @@ function HomeInner() {
     const tick = () => {
       const now = performance.now();
       const delta = now - prev; prev = now;
+      // Decrement the clock of the side to move. If UX expects opposite, invert here.
       if (currentTurn === 'white') setWhiteMs(ms => Math.max(0, ms - delta));
       else setBlackMs(ms => Math.max(0, ms - delta));
       raf = requestAnimationFrame(tick);
