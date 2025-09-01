@@ -32,7 +32,12 @@ function HomeInner() {
   const [saving, setSaving] = useState(false);
   type HistoryItem = { id: string; createdAt: string; pgn: string; depth: number; ply: number; fens: string; sans: string; series: string };
   const [history, setHistory] = useState<HistoryItem[]>([]);
-  const [playMode, setPlayMode] = useState<"off"|"engine"|"hotseat"|"engveng">("off");
+  // Game mode integration
+  import type { GameModeId } from "@/types/gameModes";
+  import { GAME_MODES_PRESETS } from "@/types/gameModes";
+  import { getEngineParams, shouldEngineMove } from "@/lib/gameRules";
+  const [modeId, setModeId] = useState<GameModeId>('hotseat');
+  const rules = useMemo(() => GAME_MODES_PRESETS[modeId], [modeId]);
   const [playerColor, setPlayerColor] = useState<"white"|"black">("white");
   const [thinking, setThinking] = useState(false);
   const [playHistory, setPlayHistory] = useState<string[]>([]);
@@ -398,8 +403,8 @@ function HomeInner() {
     try {
       const fenForEngine = fen === "startpos" ? startFen : fen;
       // If engine is not to move in engine mode, do nothing
-      if (playMode === 'engine' && currentTurn === playerColor) return;
-      if (playMode === 'engveng' && positionStatus.gameOver) return;
+      if (rules.opponent === 'engine' && currentTurn === playerColor) return;
+      if (rules.opponent === 'enginevengine' && positionStatus.gameOver) return;
       if (positionStatus.gameOver) return;
       const res = await fetch("/api/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fen: fenForEngine, depth, elo: elo ?? undefined, limitStrength: elo != null }) });
       if (!res.ok) {
@@ -444,8 +449,8 @@ function HomeInner() {
   }, [fen, depth, applyMoveUci, startFen, currentTurn, playerColor, positionStatus.gameOver, elo, squareToName, playMode, playMoveSound, analyzeFenToCp, gradeMove]);
 
   const onPieceDrop = useCallback(({ sourceSquare, targetSquare }: { sourceSquare: string; targetSquare: string; }): boolean => {
-    if (playMode === 'off' || playMode === 'engveng' || thinking) return false;
-    if (playMode === 'engine' && currentTurn !== playerColor) return false;
+    if (rules.opponent === 'enginevengine' || thinking) return false;
+    if (rules.opponent === 'engine' && currentTurn !== playerColor) return false;
     try {
       const pos = buildPosition();
       const from = parseSquare(sourceSquare);
@@ -491,7 +496,7 @@ function HomeInner() {
     } catch {
       return false;
     }
-  }, [playMode, thinking, buildPosition, fen, currentTurn, playerColor, playMoveSound, analyzeFenToCp, gradeMove, moveToUci]);
+  }, [rules.opponent, thinking, buildPosition, fen, currentTurn, playerColor, playMoveSound, analyzeFenToCp, gradeMove, moveToUci]);
 
   const newGame = useCallback(() => {
     setPlayHistory([]);
@@ -532,10 +537,10 @@ function HomeInner() {
 
   // Auto-trigger engine move only when it's the engine's turn
   useEffect(() => {
-    if (playMode !== 'engine' && playMode !== 'engveng') return;
+    if (rules.opponent !== 'engine' && rules.opponent !== 'enginevengine') return;
     if (engineOk === false) return;
     if (thinking) return;
-    if (playMode === 'engine') {
+    if (rules.opponent === 'engine') {
       if (currentTurn !== playerColor) {
         void engineReply();
       }
@@ -543,7 +548,7 @@ function HomeInner() {
       // Engine vs Engine: always let engine move
       void engineReply();
     }
-  }, [fen, currentTurn, playMode, playerColor, thinking, engineOk, engineReply]);
+  }, [fen, currentTurn, rules.opponent, playerColor, thinking, engineOk, engineReply]);
 
   // Detect game over transition to trigger review banner and async report generation
   useEffect(() => {
@@ -647,7 +652,7 @@ function HomeInner() {
           </div>
           {/* Board */}
           <div>
-            <Chessboard options={{ position: fen === "startpos" ? undefined : fen, allowDragging: (playMode !== 'off' && playMode !== 'engveng' && !thinking && !positionStatus.gameOver), squareStyles, onPieceDrop: ({ sourceSquare, targetSquare }) => onPieceDrop({ sourceSquare, targetSquare: targetSquare || sourceSquare }) }} />
+            <Chessboard options={{ position: fen === "startpos" ? undefined : fen, allowDragging: (rules.opponent !== 'enginevengine' && !thinking && !positionStatus.gameOver), squareStyles, onPieceDrop: ({ sourceSquare, targetSquare }) => onPieceDrop({ sourceSquare, targetSquare: targetSquare || sourceSquare }) }} />
             {positionStatus.gameOver && (
               <div className="mt-2 text-sm font-semibold text-red-600">{positionStatus.outcomeText}</div>
             )}
@@ -754,28 +759,30 @@ function HomeInner() {
             <button className="px-3 py-2 rounded bg-gray-200" onClick={testEngine}>Test Engine</button>
             {engineOk === true && <span className="text-xs text-green-600">Engine OK{engineReqId ? ` (${engineReqId})` : ''}</span>}
             {engineOk === false && <span className="text-xs text-red-600">Engine NOT READY{engineReqId ? ` (${engineReqId})` : ''}</span>}
-            <select className="border rounded px-2 py-1 text-sm" value={playMode} onChange={(e)=>{
-              const v = e.target.value;
-              if (v === 'off' || v === 'engine' || v === 'hotseat' || v === 'engveng') setPlayMode(v as 'off'|'engine'|'hotseat'|'engveng');
+            <select className="border rounded px-2 py-1 text-sm" value={modeId} onChange={(e)=>{
+              const v = e.target.value as GameModeId;
+              setModeId(v);
             }}>
-              <option value="off">Player mode: off</option>
-              <option value="engine">Play vs Engine</option>
-              <option value="hotseat">Two-player (local)</option>
-              <option value="engveng">Engine vs Engine</option>
+              <option value="hotseat">Hotseat</option>
+              <option value="engine">Vs Engine</option>
+              <option value="enginevengine">Engine vs Engine</option>
+              <option value="timedBlitz">Blitz 5+0</option>
+              <option value="puzzle">Puzzle</option>
+              <option value="openingTrainer">Opening Trainer</option>
             </select>
             <select className="border rounded px-2 py-1 text-sm" value={playerColor} onChange={(e)=>{
               const v = e.target.value;
               if (v === 'white' || v === 'black') setPlayerColor(v);
-            }} disabled={playMode==='off'}>
+            }} disabled={rules.opponent==='enginevengine'}>
               <option value="white">White</option>
               <option value="black">Black</option>
             </select>
-            <button className="px-2 py-1 rounded bg-gray-100" onClick={newGame} disabled={playMode==='off'}>New game</button>
+            <button className="px-2 py-1 rounded bg-gray-100" onClick={newGame}>New game</button>
             {/* Forfeit buttons */}
-            <button className="px-2 py-1 rounded bg-red-100 text-red-700" onClick={() => forfeit('white')} disabled={playMode==='off'}>Forfeit (White wins)</button>
-            <button className="px-2 py-1 rounded bg-red-100 text-red-700" onClick={() => forfeit('black')} disabled={playMode==='off'}>Forfeit (Black wins)</button>
+            <button className="px-2 py-1 rounded bg-red-100 text-red-700" onClick={() => forfeit('white')}>Forfeit (White wins)</button>
+            <button className="px-2 py-1 rounded bg-red-100 text-red-700" onClick={() => forfeit('black')}>Forfeit (Black wins)</button>
             <button className="px-2 py-1 rounded bg-gray-100" onClick={undo} disabled={playHistory.length===0}>Undo</button>
-            {playMode==='engine' && <button className="px-2 py-1 rounded bg-gray-100" onClick={undoEngine} disabled={playHistory.length<2}>Undo 2</button>}
+            {rules.opponent==='engine' && <button className="px-2 py-1 rounded bg-gray-100" onClick={undoEngine} disabled={playHistory.length<2}>Undo 2</button>}
             {thinking && <span className="text-xs text-gray-500">Engine thinking…</span>}
           </div>
           {errorMsg && (
