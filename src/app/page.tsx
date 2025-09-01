@@ -446,7 +446,7 @@ function HomeInner() {
     } finally {
       setThinking(false);
     }
-  }, [fen, depth, applyMoveUci, startFen, currentTurn, playerColor, positionStatus.gameOver, elo, squareToName, playMode, playMoveSound, analyzeFenToCp, gradeMove]);
+  }, [fen, depth, applyMoveUci, startFen, currentTurn, playerColor, positionStatus.gameOver, elo, squareToName, rules.opponent, playMoveSound, analyzeFenToCp, gradeMove]);
 
   const onPieceDrop = useCallback(({ sourceSquare, targetSquare }: { sourceSquare: string; targetSquare: string; }): boolean => {
     if (rules.opponent === 'enginevengine' || thinking) return false;
