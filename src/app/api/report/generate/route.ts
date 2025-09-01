@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { EnginePool } from "@/lib/enginePool";
 import { prisma } from "@/lib/db";
 import { parseFen, makeFen } from "chessops/fen";
-import { setupPosition } from "chessops/variant";
+import { setupPosition, defaultPosition } from "chessops/variant";
 import { parseSan } from "chessops/san";
 import type { Move, Role } from "chessops";
 import { isNormal } from "chessops";
