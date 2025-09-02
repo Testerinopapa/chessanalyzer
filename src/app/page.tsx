@@ -513,6 +513,7 @@ function HomeInner() {
   const [blackMs, setBlackMs] = useState<number>(0);
   const timeoutHandledRef = useRef(false);
   const timersInitializedRef = useRef(false);
+  const rafIdRef = useRef<number | null>(null);
   useEffect(() => {
     if (rules.time) {
       setWhiteMs(rules.time.whiteMs);
@@ -549,9 +550,11 @@ function HomeInner() {
       if (currentTurn === 'white') setWhiteMs(ms => Math.max(0, ms - delta));
       else setBlackMs(ms => Math.max(0, ms - delta));
       raf = requestAnimationFrame(tick);
+      rafIdRef.current = raf;
     };
     raf = requestAnimationFrame(tick);
-    return () => { try { cancelAnimationFrame(raf); } catch {} };
+    rafIdRef.current = raf;
+    return () => { try { if (rafIdRef.current != null) cancelAnimationFrame(rafIdRef.current); } catch {} };
   }, [rules.time, currentTurn, positionStatus.gameOver]);
   useEffect(() => {
     if (!rules.time) return;
@@ -564,6 +567,13 @@ function HomeInner() {
       else if (blackMs <= 0) { timeoutHandledRef.current = true; forfeit('white'); }
     }
   }, [whiteMs, blackMs, rules.time, positionStatus.gameOver, forfeit, lastGameSans.length, lastGameFens.length]);
+
+  // Explicitly stop clock when the game ends (e.g., resignation/forfeit without checkmate position)
+  useEffect(() => {
+    if (positionStatus.gameOver) {
+      try { if (rafIdRef.current != null) cancelAnimationFrame(rafIdRef.current); } catch {}
+    }
+  }, [positionStatus.gameOver]);
 
   // Auto-trigger engine move only when it's the engine's turn
   const shouldEngineMoveNow = useMemo(() => {
