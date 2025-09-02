@@ -30,6 +30,22 @@ async function analyzeMateInN(fen: string, depth = 12): Promise<{ mate: boolean;
   return { mate: false };
 }
 
+function materialScoreFromFen(fen: string): number {
+  // Compute simple material (p=1,n=3,b=3,r=5,q=9) using board part of fen
+  const board = fen.split(" ")[0];
+  const values: Record<string, number> = { p:1, n:3, b:3, r:5, q:9 };
+  let score = 0;
+  for (const ch of board) {
+    if (/[PNBRQ]/.test(ch)) score += values[ch.toLowerCase()] ?? 0;
+    else if (/[pnbrq]/.test(ch)) score -= values[ch] ?? (values[ch.toLowerCase()] ?? 0);
+  }
+  return score * 100; // centipawns
+}
+
+async function analyzeBestAt(fen: string, depth = 12, multiPv = 1) {
+  return EnginePool.analyze({ fen, depth, multiPv });
+}
+
 async function main() {
   const file = process.argv[2] || "/root/ChessAnalyzer/chessanalyzer/lichess_db_standard_rated_2025-08.pgn.zst";
   const source = process.argv[3] || "lichess-2025-08";
@@ -76,7 +92,27 @@ async function main() {
           saved++;
           break;
         }
+        // Blunder-refutation: look ahead one ply and check eval swing
+        const preBest = await analyzeBestAt(fen, 10);
+        const preCp = scoreToCp(preBest.info?.score) ?? 0;
         position.play(mv);
+        const afterFen = makeFen(position.toSetup());
+        const postBest = await analyzeBestAt(afterFen, 10);
+        const postCp = scoreToCp(postBest.info?.score) ?? 0;
+        const swing = postCp - preCp; // from side-to-move perspective (white positive)
+        if (Math.abs(swing) <= -300 || swing <= -300) {
+          // The played move worsened eval by >= 3 pawns; refutation is bestmove at pre position
+          const refPv = preBest.info?.pv ?? [];
+          await prisma.puzzle.create({ data: {
+            fen,
+            sideToMove: (fen.includes(" w ") ? "white" : "black"),
+            solutionPv: JSON.stringify(refPv),
+            motifs: JSON.stringify(["blunder-refutation"]),
+            source,
+          }});
+          saved++;
+          break;
+        }
       }
       seen++;
       if (seen >= limit) break;
