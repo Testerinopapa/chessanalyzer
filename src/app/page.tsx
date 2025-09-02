@@ -529,7 +529,7 @@ function HomeInner() {
     } else {
       setWhiteMs(0); setBlackMs(0); timeoutHandledRef.current = false; timersInitializedRef.current = false;
     }
-  }, [rules.time, lastGameSans.length, lastGameFens.length]);
+  }, [rules.time]);
   const applyIncrement = useCallback((moved: "white"|"black") => {
     const inc = rules.time?.incrementMs ?? 0;
     if (inc > 0) {
