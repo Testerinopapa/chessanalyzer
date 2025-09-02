@@ -1,4 +1,4 @@
-import { spawn, ChildProcessWithoutNullStreams } from "child_process";
+import { spawn } from "child_process";
 import fs from "fs";
 import readline from "readline";
 
@@ -45,8 +45,10 @@ function headersPassFilter(h: HeaderMap, f?: PgnFilter): boolean {
 
 export async function* streamPgnGamesFromZst(filePath: string, filter?: PgnFilter): AsyncGenerator<string> {
   if (!fs.existsSync(filePath)) throw new Error(`Missing file: ${filePath}`);
-  const proc: ChildProcessWithoutNullStreams = spawn("zstd", ["-dc", filePath], { stdio: ["ignore", "pipe", "inherit"] });
-  const rl = readline.createInterface({ input: proc.stdout });
+  const proc = spawn("zstd", ["-dc", filePath]);
+  const stdout = proc.stdout;
+  if (!stdout) throw new Error("zstd stdout not available");
+  const rl = readline.createInterface({ input: stdout });
 
   let buf: string[] = [];
   let headers: HeaderMap = {};
@@ -99,7 +101,7 @@ export async function* streamPgnGamesFromZst(filePath: string, filter?: PgnFilte
   const out = flush();
   if (out) yield out;
 
-  await new Promise<void>(res => proc.on("close", () => res()));
+  await new Promise<void>((res) => proc.on("close", () => res()));
 }
 
 
