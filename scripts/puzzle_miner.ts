@@ -17,7 +17,7 @@ function scoreToCp(s: { type: "cp" | "mate"; value: number } | undefined): numbe
 }
 
 async function analyzeOnlyMove(fen: string, depth = 12): Promise<{ only: boolean; bestmove?: string; pv?: string[] } | null> {
-  const res = await EnginePool.analyze({ fen, depth, multiPv: 2 });
+  const res = await withTimeout(EnginePool.analyze({ fen, depth, multiPv: 2 }), 8000, "onlyMove");
   const infos = (res.infos ?? []).slice(0, 2);
   if (infos.length < 2) return { only: true, bestmove: res.bestmove ?? undefined, pv: res.info?.pv };
   const sc0 = scoreToCp(infos[0]?.score) ?? 0;
@@ -27,7 +27,7 @@ async function analyzeOnlyMove(fen: string, depth = 12): Promise<{ only: boolean
 }
 
 async function analyzeMateInN(fen: string, depth = 12): Promise<{ mate: boolean; pv?: string[] } | null> {
-  const res = await EnginePool.analyze({ fen, depth, multiPv: 1 });
+  const res = await withTimeout(EnginePool.analyze({ fen, depth, multiPv: 1 }), 8000, "mate");
   if (res.info?.score?.type === "mate") return { mate: true, pv: res.info?.pv };
   return { mate: false };
 }
@@ -45,7 +45,7 @@ function materialScoreFromFen(fen: string): number {
 }
 
 async function analyzeBestAt(fen: string, depth = 12, multiPv = 1) {
-  return EnginePool.analyze({ fen, depth, multiPv });
+  return withTimeout(EnginePool.analyze({ fen, depth, multiPv }), 8000, "bestAt");
 }
 
 function applyUciPliesAndMaterialDelta(fen: string, pv: string[] | undefined, plies = 2): number {
@@ -78,7 +78,7 @@ async function main() {
   const reportEvery = Math.max(1, parseInt(process.argv[5] || "10", 10));
   const startTs = Date.now();
   let lastReportTs = startTs;
-  let seen = 0, saved = 0;
+  let read = 0, seen = 0, saved = 0;
   logger.info({ file, source, limit, reportEvery }, "puzzle_miner:start");
   // SIGINT summary
   process.on("SIGINT", () => {
@@ -90,6 +90,7 @@ async function main() {
     process.exit(0);
   });
   for await (const pgn of streamPgnGamesFromZst(file, { ratedOnly: true })) {
+    read++;
     try {
       const games = parsePgn(pgn);
       if (games.length === 0) continue;
@@ -157,26 +158,33 @@ async function main() {
         }
       }
       seen++;
-      if (seen % reportEvery === 0) {
+      if (read % reportEvery === 0 || seen % reportEvery === 0) {
         const now = Date.now();
         const elapsed = (now - startTs) / 1000;
         const interval = (now - lastReportTs) / 1000;
         lastReportTs = now;
-        const rate = seen > 0 ? seen / elapsed : 0;
-        const remaining = Math.max(0, limit - seen);
+        const rate = read > 0 ? read / elapsed : 0;
+        const remaining = Math.max(0, limit - read);
         const etaSec = rate > 0 ? remaining / rate : 0;
-        logger.info({ seen, saved, ratePerSec: rate.toFixed(2), intervalSec: interval.toFixed(1), etaSec: etaSec.toFixed(1) }, "puzzle_miner:progress");
+        logger.info({ read, seen, saved, ratePerSec: rate.toFixed(2), intervalSec: interval.toFixed(1), etaSec: etaSec.toFixed(1) }, "puzzle_miner:progress");
         // eslint-disable-next-line no-console
-        console.log(JSON.stringify({ seen, saved, ratePerSec: rate.toFixed(2), etaSec: etaSec.toFixed(1) }));
+        console.log(JSON.stringify({ read, seen, saved, ratePerSec: rate.toFixed(2), etaSec: etaSec.toFixed(1) }));
       }
-      if (seen >= limit) break;
+      if (read >= limit) break;
     } catch {}
   }
   const elapsed = (Date.now() - startTs) / 1000;
-  const rate = seen > 0 ? seen / elapsed : 0;
-  logger.info({ seen, saved, elapsedSec: elapsed.toFixed(1), ratePerSec: rate.toFixed(2) }, "puzzle_miner:done");
+  const rate = read > 0 ? read / elapsed : 0;
+  logger.info({ read, seen, saved, elapsedSec: elapsed.toFixed(1), ratePerSec: rate.toFixed(2) }, "puzzle_miner:done");
   // eslint-disable-next-line no-console
-  console.log(JSON.stringify({ seen, saved, elapsedSec: elapsed.toFixed(1), ratePerSec: rate.toFixed(2) }));
+  console.log(JSON.stringify({ read, seen, saved, elapsedSec: elapsed.toFixed(1), ratePerSec: rate.toFixed(2) }));
+}
+
+async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return await Promise.race([
+    p,
+    new Promise<T>((_, rej) => setTimeout(() => rej(new Error(`timeout:${label}`)), ms)) as Promise<T>,
+  ]);
 }
 
 void main();
