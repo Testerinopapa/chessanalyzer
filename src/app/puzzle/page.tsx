@@ -23,8 +23,10 @@ export default function PuzzlePage() {
     (async () => {
       try {
         const res = await fetch("/api/puzzles/random");
-        if (!res.ok) throw new Error("No puzzle");
-        setPz(await res.json());
+        if (!res.ok) throw new Error("Failed");
+        const j = await res.json();
+        if (!j) { setError("No puzzles found. Run the miner to populate."); return; }
+        setPz(j);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to load");
       }
