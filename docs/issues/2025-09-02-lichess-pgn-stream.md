@@ -45,3 +45,31 @@ export async function* streamPgnGamesFromZst(filePath: string, filter?: PgnFilte
 ## Notes
 - Ensure `zstd` is installed on the host (e.g., `apt-get install -y zstd`).
 - Keep streaming pure and side-effect free; puzzle generation will be handled in a separate task.
+
+## Lichess PGN dump structure (what we can leverage)
+- File format: `.pgn.zst` – plain PGN compressed with Zstandard; no container beyond zstd.
+- Game separation: each game is a PGN block with headers in square brackets, followed by movetext, and separated by one or more blank lines.
+- Common headers available per game:
+  - `[Event]`, `[Site]`, `[Date]`, `[Round]`, `[White]`, `[Black]`, `[Result]`
+  - Rating fields: `[WhiteElo]`, `[BlackElo]` (may be `?` if unknown)
+  - Time control: `[TimeControl]` (e.g., `600+0` for 10+0, `180+2` for 3+2, `-` for undefined)
+  - Variant and format: `[Variant]` (usually `Standard`), `[UTCDate]`, `[UTCTime]`
+  - Termination/reason: `[Termination]` (e.g., `Time forfeit`, `Normal`, `Abandoned`)
+  - ECO and openings (when present): `[ECO]`, `[Opening]`, `[Variation]`
+  - Speed classification sometimes appears in `[Event]` or tags like `[Mode]`/`[Event]` (`Rated Blitz game`)
+- Movetext: standard SAN with comments/NAGs occasionally; result token at end (`1-0`, `0-1`, `1/2-1/2`).
+
+### Implications for streaming/filters
+- We can cheaply filter by:
+  - Variant == `Standard`
+  - Rated vs casual via `[Event]` or presence of `Rated` in event value
+  - Elo ranges using `[WhiteElo]`/`[BlackElo]` numeric parsing
+  - Time control buckets using `[TimeControl]` seconds and increment
+  - Termination reason to prefer clean games (exclude `Abandoned`)
+- We should tolerate missing/`?` tags and skip when filters can’t be evaluated.
+- Because it’s line-oriented, we can parse headers before collecting full movetext to decide early skipping.
+
+### What we cannot assume
+- Not all games have full opening tags or clean headers; header order may vary.
+- Some dumps may include comments/annotations; avoid assuming single-line headers only, but they generally are single lines.
+- No index; random access is expensive. Streaming is sequential; maintain counters for sampling.
