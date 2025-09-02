@@ -8,6 +8,7 @@ import { isNormal } from "chessops";
 import { parseUci } from "chessops/util";
 import { prisma } from "../src/lib/db";
 import { EnginePool } from "../src/lib/enginePool";
+import { logger } from "../src/lib/logger";
 
 function scoreToCp(s: { type: "cp" | "mate"; value: number } | undefined): number | null {
   if (!s) return null;
@@ -74,7 +75,20 @@ async function main() {
   const file = process.argv[2] || "/root/ChessAnalyzer/chessanalyzer/lichess_db_standard_rated_2025-08.pgn.zst";
   const source = process.argv[3] || "lichess-2025-08";
   const limit = parseInt(process.argv[4] || "50", 10);
+  const reportEvery = Math.max(1, parseInt(process.argv[5] || "10", 10));
+  const startTs = Date.now();
+  let lastReportTs = startTs;
   let seen = 0, saved = 0;
+  logger.info({ file, source, limit, reportEvery }, "puzzle_miner:start");
+  // SIGINT summary
+  process.on("SIGINT", () => {
+    const elapsed = (Date.now() - startTs) / 1000;
+    const rate = seen > 0 ? seen / elapsed : 0;
+    logger.info({ seen, saved, elapsedSec: elapsed.toFixed(1), ratePerSec: rate.toFixed(2) }, "puzzle_miner:interrupt_summary");
+    // eslint-disable-next-line no-console
+    console.log(JSON.stringify({ seen, saved, elapsedSec: elapsed.toFixed(1), ratePerSec: rate.toFixed(2) }));
+    process.exit(0);
+  });
   for await (const pgn of streamPgnGamesFromZst(file, { ratedOnly: true })) {
     try {
       const games = parsePgn(pgn);
@@ -143,11 +157,26 @@ async function main() {
         }
       }
       seen++;
+      if (seen % reportEvery === 0) {
+        const now = Date.now();
+        const elapsed = (now - startTs) / 1000;
+        const interval = (now - lastReportTs) / 1000;
+        lastReportTs = now;
+        const rate = seen > 0 ? seen / elapsed : 0;
+        const remaining = Math.max(0, limit - seen);
+        const etaSec = rate > 0 ? remaining / rate : 0;
+        logger.info({ seen, saved, ratePerSec: rate.toFixed(2), intervalSec: interval.toFixed(1), etaSec: etaSec.toFixed(1) }, "puzzle_miner:progress");
+        // eslint-disable-next-line no-console
+        console.log(JSON.stringify({ seen, saved, ratePerSec: rate.toFixed(2), etaSec: etaSec.toFixed(1) }));
+      }
       if (seen >= limit) break;
     } catch {}
   }
+  const elapsed = (Date.now() - startTs) / 1000;
+  const rate = seen > 0 ? seen / elapsed : 0;
+  logger.info({ seen, saved, elapsedSec: elapsed.toFixed(1), ratePerSec: rate.toFixed(2) }, "puzzle_miner:done");
   // eslint-disable-next-line no-console
-  console.log(JSON.stringify({ seen, saved }));
+  console.log(JSON.stringify({ seen, saved, elapsedSec: elapsed.toFixed(1), ratePerSec: rate.toFixed(2) }));
 }
 
 void main();
