@@ -557,11 +557,13 @@ function HomeInner() {
     if (!rules.time) return;
     if (!timersInitializedRef.current) return;
     if (positionStatus.gameOver) return;
+    // Don't auto-forfeit before any move has been made
+    if (lastGameSans.length === 0 && lastGameFens.length === 0) return;
     if (!timeoutHandledRef.current) {
       if (whiteMs <= 0) { timeoutHandledRef.current = true; forfeit('black'); }
       else if (blackMs <= 0) { timeoutHandledRef.current = true; forfeit('white'); }
     }
-  }, [whiteMs, blackMs, rules.time, positionStatus.gameOver, forfeit]);
+  }, [whiteMs, blackMs, rules.time, positionStatus.gameOver, forfeit, lastGameSans.length, lastGameFens.length]);
 
   // Auto-trigger engine move only when it's the engine's turn
   const shouldEngineMoveNow = useMemo(() => {
@@ -582,6 +584,11 @@ function HomeInner() {
   // Detect game over transition to trigger review banner and async report generation
   useEffect(() => {
     if (positionStatus.gameOver && !prevGameOverRef.current) {
+      // Only generate a report if we actually have moves to report
+      if (lastGameSans.length === 0 || lastGameFens.length === 0) {
+        prevGameOverRef.current = positionStatus.gameOver;
+        return;
+      }
       setShowReviewBanner(true);
       setGeneratingReport(true);
       setReportId(null);
