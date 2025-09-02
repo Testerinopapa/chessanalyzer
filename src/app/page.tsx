@@ -407,6 +407,11 @@ function HomeInner() {
   const onPieceDrop = useCallback(({ sourceSquare, targetSquare }: { sourceSquare: string; targetSquare: string; }): boolean => {
     if (rules.opponent === 'enginevengine' || thinking) return false;
     if (rules.opponent === 'engine' && currentTurn !== playerColor) return false;
+    // Disallow moves when flagged in timed modes
+    if (rules.time) {
+      const moverTimeMs = currentTurn === 'white' ? whiteMs : blackMs;
+      if (moverTimeMs <= 0) return false;
+    }
     try {
       const pos = buildPosition();
       const from = parseSquare(sourceSquare);
@@ -426,6 +431,7 @@ function HomeInner() {
       // Compute SAN BEFORE applying the move, so we don't depend on mutated position
       let sanForRecord: string | null = null;
       try { sanForRecord = makeSan(pos, move as Move); } catch { sanForRecord = null; }
+      const movedSide: 'white'|'black' = currentTurn;
       pos.play(move as Move);
       const nextFen = makeFen(pos.toSetup());
       setPlayHistory(h => [...h, fen]);
@@ -443,6 +449,8 @@ function HomeInner() {
       } catch {}
       void (async () => { const cp = await analyzeFenToCp(nextFen); if (cp !== null) setCurrentCp(cp); })();
       playMoveSound();
+      // increment after move for timed modes
+      if (rules.time) applyIncrement(movedSide);
       // record SAN and FEN
       if (sanForRecord) {
         try { setLastGameSans(arr => [...arr, sanForRecord!]); } catch {}
@@ -452,7 +460,7 @@ function HomeInner() {
     } catch {
       return false;
     }
-  }, [rules.opponent, thinking, buildPosition, fen, currentTurn, playerColor, playMoveSound, analyzeFenToCp, gradeMove, moveToUci]);
+  }, [rules.opponent, rules.time, thinking, buildPosition, fen, currentTurn, playerColor, playMoveSound, analyzeFenToCp, gradeMove, moveToUci]);
 
   const newGame = useCallback(() => {
     setPlayHistory([]);
@@ -473,7 +481,15 @@ function HomeInner() {
     setPgn("");
     setPendingPromotion(null);
     setThinking(false);
-  }, []);
+    // Reset timers to initial values for timed modes
+    if (rules.time) {
+      setWhiteMs(rules.time.whiteMs);
+      setBlackMs(rules.time.blackMs);
+      timeoutHandledRef.current = false;
+    } else {
+      setWhiteMs(0); setBlackMs(0); timeoutHandledRef.current = false;
+    }
+  }, [rules.time]);
 
   // Forfeit: declare immediate result and send report
   const forfeit = useCallback((winner: 'white'|'black') => {
