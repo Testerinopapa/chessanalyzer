@@ -568,12 +568,18 @@ function HomeInner() {
   // Auto-trigger engine move only when it's the engine's turn
   const shouldEngineMoveNow = useMemo(() => {
     const { opponent, time } = composePolicies({ opponent: rules.opponent, time: rules.time ?? null });
+    // Engine should move only if opponent policy says so
     if (!opponent.shouldEngineMove({ turn: currentTurn, playerColor })) return false;
+    // Additionally, for human vs engine, only let engine move after human has made at least one move when human starts
+    if (rules.opponent === 'engine' && playerColor === 'white' && currentTurn === 'black') {
+      // If no human move yet, prevent engine from moving first in blitz
+      if (lastGameSans.length === 0) return false;
+    }
     if (engineOk === false) return false;
     if (thinking) return false;
     if (time.hasTime && (currentTurn === 'white' ? whiteMs <= 0 : blackMs <= 0)) return false;
     return true;
-  }, [rules.opponent, rules.time, currentTurn, playerColor, engineOk, thinking, whiteMs, blackMs]);
+  }, [rules.opponent, rules.time, currentTurn, playerColor, engineOk, thinking, whiteMs, blackMs, lastGameSans.length]);
   // Deferred effect to avoid use-before-declare of engineReply
   useEffect(() => {
     if (!shouldEngineMoveNow) return;
@@ -748,7 +754,18 @@ function HomeInner() {
           </div>
           {/* Board */}
           <div>
-            <Chessboard options={{ position: fen === "startpos" ? undefined : fen, allowDragging: (rules.opponent !== 'enginevengine' && !thinking && !positionStatus.gameOver), squareStyles, onPieceDrop: ({ sourceSquare, targetSquare }) => onPieceDrop({ sourceSquare, targetSquare: targetSquare || sourceSquare }), boardOrientation: orientation }} />
+            <Chessboard options={{
+              position: fen === "startpos" ? undefined : fen,
+              allowDragging: (
+                rules.opponent !== 'enginevengine' &&
+                !thinking &&
+                !positionStatus.gameOver &&
+                (rules.opponent !== 'engine' || currentTurn === playerColor)
+              ),
+              squareStyles,
+              onPieceDrop: ({ sourceSquare, targetSquare }) => onPieceDrop({ sourceSquare, targetSquare: targetSquare || sourceSquare }),
+              boardOrientation: orientation,
+            }} />
             <div className="mt-2 flex gap-2">
               <button className="px-2 py-1 rounded border" onClick={() => setOrientation((o: 'white'|'black') => o === 'white' ? 'black' : 'white')}>Flip board</button>
             </div>
