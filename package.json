@@ -8,7 +8,9 @@
     "start": "next start",
     "lint": "eslint",
     "test:caps1": "node scripts/caps1_smoke.js && node scripts/caps1_snapshots.js",
-    "test:caps1:stability": "node scripts/caps1_stability.js"
+    "test:caps1:stability": "node scripts/caps1_stability.js",
+    "preview:lichess": "tsx scripts/preview_lichess.ts",
+    "puzzle:mine": "tsx scripts/puzzle_miner.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.14.0",
@@ -29,6 +31,7 @@
     "eslint": "^9",
     "eslint-config-next": "15.5.0",
     "tailwindcss": "^4",
+    "tsx": "^4.20.5",
     "typescript": "^5"
   }
 }
