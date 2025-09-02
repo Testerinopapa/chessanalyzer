@@ -635,6 +635,25 @@ function HomeInner() {
     });
   }, []);
 
+  // Debugging helper for Blitz
+  const debugBlitz = useCallback(() => {
+    if (modeId !== 'timedBlitz') return;
+    const composed = composePolicies({ opponent: rules.opponent, time: rules.time ?? null, assistance: rules.assistance ?? null, engine: rules.engine ?? null, constraints: rules.constraints ?? null });
+    const shouldMove = composed.opponent.shouldEngineMove({ turn: currentTurn, playerColor });
+    // eslint-disable-next-line no-console
+    console.debug('timedBlitz debug', {
+      modeId,
+      rules,
+      currentTurn,
+      timers: { whiteMs, blackMs },
+      timePolicy: composed.time,
+      engineOk,
+      thinking,
+      positionStatus,
+      shouldEngineMove: shouldMove,
+    });
+  }, [modeId, rules, currentTurn, playerColor, whiteMs, blackMs, engineOk, thinking, positionStatus]);
+
   const completePromotion = useCallback((role: Role) => {
     if (!pendingPromotion) return;
     const { from: fromStr, to: toStr } = pendingPromotion;
@@ -800,6 +819,7 @@ function HomeInner() {
             <button className="px-3 py-2 rounded bg-black text-white disabled:opacity-50" onClick={handleAnalyzeServer} disabled={!isFenValid || loading}>{loading ? 'Analyzing…' : 'Analyze (Server)'}</button>
             <button className="px-3 py-2 rounded bg-gray-200 disabled:opacity-50" onClick={handleSave} disabled={saving || moves.length===0 || series.length===0}>{saving ? 'Saving…' : 'Save Analysis'}</button>
             <button className="px-3 py-2 rounded bg-gray-200" onClick={testEngine}>Test Engine</button>
+            <button className="px-3 py-2 rounded bg-gray-200" onClick={debugBlitz} disabled={modeId!== 'timedBlitz'}>Debug Blitz</button>
             {engineOk === true && <span className="text-xs text-green-600">Engine OK{engineReqId ? ` (${engineReqId})` : ''}</span>}
             {engineOk === false && <span className="text-xs text-red-600">Engine NOT READY{engineReqId ? ` (${engineReqId})` : ''}</span>}
             <select className="border rounded px-2 py-1 text-sm" value={modeId} onChange={(e)=>{
