@@ -1,0 +1,14 @@
+# Ignore local dev/build artifacts and huge datasets
+node_modules
+.next
+out
+logs
+prisma/*.db
+prisma/*.sqlite
+prisma/*.sqlite-journal
+*.tsbuildinfo
+.vercel
+.env*
+
+# Lichess dumps
+lichess_db_*.pgn.zst
