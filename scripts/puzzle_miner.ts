@@ -5,6 +5,7 @@ import { setupPosition } from "chessops/variant";
 import { parseSan } from "chessops/san";
 import type { Move } from "chessops";
 import { isNormal } from "chessops";
+import { parseUci } from "chessops/util";
 import { prisma } from "../src/lib/db";
 import { EnginePool } from "../src/lib/enginePool";
 
@@ -46,6 +47,29 @@ async function analyzeBestAt(fen: string, depth = 12, multiPv = 1) {
   return EnginePool.analyze({ fen, depth, multiPv });
 }
 
+function applyUciPliesAndMaterialDelta(fen: string, pv: string[] | undefined, plies = 2): number {
+  if (!pv || pv.length === 0) return 0;
+  try {
+    const setupRes = parseFen(fen);
+    if (setupRes.isErr) return 0;
+    const posRes = setupPosition("chess", setupRes.unwrap());
+    if (posRes.isErr) return 0;
+    const pos = posRes.unwrap();
+    const startMat = materialScoreFromFen(fen);
+    const limit = Math.min(plies, pv.length);
+    for (let i = 0; i < limit; i++) {
+      const mv = parseUci(pv[i]) as Move | undefined;
+      if (!mv || !pos.isLegal(mv)) break;
+      pos.play(mv);
+    }
+    const endFen = makeFen(pos.toSetup());
+    const endMat = materialScoreFromFen(endFen);
+    return endMat - startMat; // positive = winning material for side to move
+  } catch {
+    return 0;
+  }
+}
+
 async function main() {
   const file = process.argv[2] || "/root/ChessAnalyzer/chessanalyzer/lichess_db_standard_rated_2025-08.pgn.zst";
   const source = process.argv[3] || "lichess-2025-08";
@@ -58,8 +82,8 @@ async function main() {
       const game = games[0];
       const startRes = startingPosition(game.headers);
       if (startRes.isErr) continue;
-      const pos = startRes.unwrap();
-      const sres = setupPosition("chess", pos);
+      const setup = startRes.unwrap();
+      const sres = setupPosition("chess", setup as any);
       if (sres.isErr) continue;
       const position = sres.unwrap();
       for (const node of game.moves.mainline()) {
@@ -70,7 +94,7 @@ async function main() {
         // Simple motifs: mate-in-N or only-move
         const mate = await analyzeMateInN(fen, 12);
         if (mate?.mate) {
-          await prisma.puzzle.create({ data: {
+          await (prisma as any).puzzle.create({ data: {
             fen,
             sideToMove: (position.toSetup().turn as "white"|"black") ?? "white",
             solutionPv: JSON.stringify(mate.pv ?? []),
@@ -82,11 +106,13 @@ async function main() {
         }
         const only = await analyzeOnlyMove(fen, 12);
         if (only?.only && only.bestmove) {
-          await prisma.puzzle.create({ data: {
+          const matGain = applyUciPliesAndMaterialDelta(fen, only.pv, 2);
+          const motifs: string[] = ["only-move"]; if (matGain >= 200) motifs.push("win-material");
+          await (prisma as any).puzzle.create({ data: {
             fen,
             sideToMove: (position.toSetup().turn as "white"|"black") ?? "white",
             solutionPv: JSON.stringify(only.pv ?? []),
-            motifs: JSON.stringify(["only-move"]),
+            motifs: JSON.stringify(motifs),
             source,
           }});
           saved++;
@@ -100,14 +126,16 @@ async function main() {
         const postBest = await analyzeBestAt(afterFen, 10);
         const postCp = scoreToCp(postBest.info?.score) ?? 0;
         const swing = postCp - preCp; // from side-to-move perspective (white positive)
-        if (Math.abs(swing) <= -300 || swing <= -300) {
+        if (swing <= -300) {
           // The played move worsened eval by >= 3 pawns; refutation is bestmove at pre position
           const refPv = preBest.info?.pv ?? [];
-          await prisma.puzzle.create({ data: {
+          const matGain = applyUciPliesAndMaterialDelta(fen, refPv, 2);
+          const motifs: string[] = ["blunder-refutation"]; if (matGain >= 200) motifs.push("win-material");
+          await (prisma as any).puzzle.create({ data: {
             fen,
             sideToMove: (fen.includes(" w ") ? "white" : "black"),
             solutionPv: JSON.stringify(refPv),
-            motifs: JSON.stringify(["blunder-refutation"]),
+            motifs: JSON.stringify(motifs),
             source,
           }});
           saved++;
