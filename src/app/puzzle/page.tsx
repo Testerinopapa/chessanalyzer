@@ -25,6 +25,7 @@ export default function PuzzlePage() {
   const [idx, setIdx] = useState(0);
   const [message, setMessage] = useState<string | null>(null);
   const [solved, setSolved] = useState(false);
+  const [showHint, setShowHint] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -95,6 +96,7 @@ export default function PuzzlePage() {
       setFen(next);
       setIdx(nextIdx);
       setMessage(null);
+      setShowHint(false);
       // Auto-play opponent reply if exists
       if (pv[nextIdx]) {
         const afterReply = applyMoveUci(next, pv[nextIdx]);
@@ -132,6 +134,36 @@ export default function PuzzlePage() {
     setSolved(true);
   }, [pz, pv, applyMoveUci]);
 
+  const playStep = useCallback(() => {
+    if (!pz || !fen || solved) return;
+    const expected = pv[idx];
+    if (!expected) return;
+    const next = applyMoveUci(fen, expected);
+    if (!next) return;
+    let nextIdx = idx + 1;
+    setFen(next);
+    setIdx(nextIdx);
+    setMessage(null);
+    setShowHint(false);
+    if (pv[nextIdx]) {
+      const afterReply = applyMoveUci(next, pv[nextIdx]);
+      if (afterReply) { setFen(afterReply); nextIdx += 1; setIdx(nextIdx); }
+    }
+    if (nextIdx >= pv.length) setSolved(true);
+  }, [pz, fen, solved, pv, idx, applyMoveUci]);
+
+  const squareStyles = useMemo<Record<string, React.CSSProperties>>(() => {
+    const styles: Record<string, React.CSSProperties> = {};
+    if (showHint && pv[idx]) {
+      const uci = pv[idx];
+      const from = uci.slice(0, 2);
+      const to = uci.slice(2, 4);
+      styles[from] = { outline: "2px solid rgba(234,179,8,.9)", outlineOffset: "-2px", backgroundColor: "rgba(234,179,8,.15)" };
+      styles[to] = { outline: "2px solid rgba(234,179,8,.9)", outlineOffset: "-2px", backgroundColor: "rgba(234,179,8,.15)" };
+    }
+    return styles;
+  }, [showHint, pv, idx]);
+
   return (
     <div className="p-6 max-w-3xl mx-auto">
       <h1 className="text-2xl font-semibold mb-4">Puzzle</h1>
@@ -140,7 +172,7 @@ export default function PuzzlePage() {
       {pz && (
         <div className="space-y-3">
           <div>
-            <Chessboard options={{ position: boardFen === "startpos" ? undefined : boardFen, allowDragging: !solved && sideToMove === orientation, onPieceDrop: ({ sourceSquare, targetSquare }) => onPieceDrop({ sourceSquare, targetSquare: targetSquare || sourceSquare }), boardOrientation: orientation }} />
+            <Chessboard options={{ position: boardFen === "startpos" ? undefined : boardFen, allowDragging: !solved && sideToMove === orientation, onPieceDrop: ({ sourceSquare, targetSquare }) => onPieceDrop({ sourceSquare, targetSquare: targetSquare || sourceSquare }), boardOrientation: orientation, squareStyles }} />
           </div>
           <div className="text-sm text-gray-600">Motifs: {(() => { try { return (JSON.parse(pz.motifs) as string[]).join(", "); } catch { return pz.motifs; } })()}</div>
           <div className="text-sm text-gray-600">Source: {pz.source}</div>
@@ -149,6 +181,8 @@ export default function PuzzlePage() {
           <div className="flex gap-2">
             <button className="px-3 py-2 rounded bg-gray-200" onClick={() => setShowSolution(s => !s)}>{showSolution ? "Hide solution" : "Show solution"}</button>
             <button className="px-3 py-2 rounded bg-gray-200" onClick={reset}>Reset</button>
+            <button className="px-3 py-2 rounded bg-gray-200" onClick={() => setShowHint(h => !h)}>{showHint ? "Hide hint" : "Hint"}</button>
+            <button className="px-3 py-2 rounded bg-gray-200" onClick={playStep}>Play step</button>
             <button className="px-3 py-2 rounded bg-gray-200" onClick={playAll}>Play solution</button>
             <a className="px-3 py-2 rounded bg-gray-200" href="/puzzle">Next</a>
           </div>
