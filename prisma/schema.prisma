@@ -32,4 +32,29 @@ model Report {
 	accuracy   Float
 }
 
+model Puzzle {
+  id          String   @id @default(cuid())
+  createdAt   DateTime @default(now())
+  fen         String
+  sideToMove  String
+  solutionPv  String   // JSON string: string[] (UCI or SAN sequence)
+  motifs      String   // JSON string: string[] (e.g., ["mate-in-1","only-move"])
+  source      String   // e.g., "lichess-2025-08"
+  rating      Int?
+
+  @@index([createdAt])
+}
+
+model PuzzleAttempt {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  puzzleId  String
+  timeMs    Int
+  mistakes  Int
+  solved    Boolean
+  rating    Int?
+
+  @@index([puzzleId, createdAt])
+}
+
 

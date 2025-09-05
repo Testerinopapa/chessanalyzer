@@ -41,7 +41,14 @@ yarn-error.log*
 next-env.d.ts
 logs/
 
+# large lichess dumps
+lichess_db_*.pgn.zst
+
 # sqlite database files
 /prisma/*.db
 /prisma/*.sqlite
 /prisma/*.sqlite-journal
+
+# Large local datasets
+*.zst
+*.zst:Zone.Identifier

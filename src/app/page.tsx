@@ -10,6 +10,11 @@ import type { Move, NormalMove, Role, Position } from "chessops";
 import { isNormal } from "chessops";
 import { FILE_NAMES, RANK_NAMES } from "chessops";
 import { useRouter, useSearchParams } from "next/navigation";
+import type { GameModeId } from "@/types/gameModes";
+import { GAME_MODES_PRESETS } from "@/types/gameModes";
+// (reserved for future use) import { getEngineParams, shouldEngineMove } from "@/lib/gameRules";
+import { Clock } from "@/components/Clock";
+import { composePolicies } from "@/lib/policies";
 
 const Chessboard = dynamic(() => import("react-chessboard").then(m => m.Chessboard), { ssr: false });
 
@@ -32,7 +37,9 @@ function HomeInner() {
   const [saving, setSaving] = useState(false);
   type HistoryItem = { id: string; createdAt: string; pgn: string; depth: number; ply: number; fens: string; sans: string; series: string };
   const [history, setHistory] = useState<HistoryItem[]>([]);
-  const [playMode, setPlayMode] = useState<"off"|"engine"|"hotseat"|"engveng">("off");
+  // Game mode integration
+  const [modeId, setModeId] = useState<GameModeId>('hotseat');
+  const rules = useMemo(() => GAME_MODES_PRESETS[modeId], [modeId]);
   const [playerColor, setPlayerColor] = useState<"white"|"black">("white");
   const [thinking, setThinking] = useState(false);
   const [playHistory, setPlayHistory] = useState<string[]>([]);
@@ -53,7 +60,9 @@ function HomeInner() {
   const [generatingReport, setGeneratingReport] = useState(false);
   const [reportId, setReportId] = useState<string | null>(null);
   const prevGameOverRef = useRef(false);
+  const [orientation, setOrientation] = useState<"white"|"black">("white");
 
+  // Timers moved below to avoid use-before-declare lint
   const handleAnalyzeServer = useCallback(async () => {
     setLoading(true);
     setBestMove(null);
@@ -393,59 +402,16 @@ function HomeInner() {
     return parts.join(' ') + ' *';
   }, []);
 
-  const engineReply = useCallback(async () => {
-    setThinking(true);
-    try {
-      const fenForEngine = fen === "startpos" ? startFen : fen;
-      // If engine is not to move in engine mode, do nothing
-      if (playMode === 'engine' && currentTurn === playerColor) return;
-      if (playMode === 'engveng' && positionStatus.gameOver) return;
-      if (positionStatus.gameOver) return;
-      const res = await fetch("/api/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fen: fenForEngine, depth, elo: elo ?? undefined, limitStrength: elo != null }) });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        setErrorMsg(`Engine error: ${err?.error || res.status}`);
-        return;
-      }
-      const json = await res.json();
-      const uci: string | undefined = json?.bestmove;
-      if (!uci) return;
-      const nextFen = applyMoveUci(fenForEngine, uci);
-      if (nextFen) {
-        setPlayHistory(h => [...h, fen]);
-        setFen(nextFen);
-        const mv = parseUci(uci) as Move | undefined;
-        if (mv && isNormal(mv)) {
-          setLastMove({ from: squareToName(mv.from), to: squareToName(mv.to) });
-          // compute SAN from previous position
-          const setupRes = parseFen(fenForEngine);
-          if (setupRes.isOk) {
-            const resPos = setupPosition("chess", setupRes.unwrap());
-            if (resPos.isOk) {
-              const p = resPos.unwrap();
-              const san = makeSan(p, mv);
-              setLastGameSans(arr => [...arr, san]);
-            }
-          }
-        }
-        // Grade the engine's move using pre-move fen and played UCI
-        void (async () => {
-          const graded = await gradeMove(fenForEngine, uci);
-          if (graded) { setLastTag(graded.tag); setLastCpl(graded.cpl); }
-        })();
-        const cp = await analyzeFenToCp(nextFen);
-        if (cp !== null) setCurrentCp(cp);
-        playMoveSound();
-        setLastGameFens(arr => [...arr, nextFen]);
-      }
-    } finally {
-      setThinking(false);
-    }
-  }, [fen, depth, applyMoveUci, startFen, currentTurn, playerColor, positionStatus.gameOver, elo, squareToName, playMode, playMoveSound, analyzeFenToCp, gradeMove]);
+  
 
   const onPieceDrop = useCallback(({ sourceSquare, targetSquare }: { sourceSquare: string; targetSquare: string; }): boolean => {
-    if (playMode === 'off' || playMode === 'engveng' || thinking) return false;
-    if (playMode === 'engine' && currentTurn !== playerColor) return false;
+    if (rules.opponent === 'enginevengine' || thinking) return false;
+    if (rules.opponent === 'engine' && currentTurn !== playerColor) return false;
+    // Disallow moves when flagged in timed modes
+    if (rules.time) {
+      const moverTimeMs = currentTurn === 'white' ? whiteMs : blackMs;
+      if (moverTimeMs <= 0) return false;
+    }
     try {
       const pos = buildPosition();
       const from = parseSquare(sourceSquare);
@@ -465,6 +431,7 @@ function HomeInner() {
       // Compute SAN BEFORE applying the move, so we don't depend on mutated position
       let sanForRecord: string | null = null;
       try { sanForRecord = makeSan(pos, move as Move); } catch { sanForRecord = null; }
+      const movedSide: 'white'|'black' = currentTurn;
       pos.play(move as Move);
       const nextFen = makeFen(pos.toSetup());
       setPlayHistory(h => [...h, fen]);
@@ -482,6 +449,8 @@ function HomeInner() {
       } catch {}
       void (async () => { const cp = await analyzeFenToCp(nextFen); if (cp !== null) setCurrentCp(cp); })();
       playMoveSound();
+      // increment after move for timed modes
+      if (rules.time) applyIncrement(movedSide);
       // record SAN and FEN
       if (sanForRecord) {
         try { setLastGameSans(arr => [...arr, sanForRecord!]); } catch {}
@@ -491,7 +460,7 @@ function HomeInner() {
     } catch {
       return false;
     }
-  }, [playMode, thinking, buildPosition, fen, currentTurn, playerColor, playMoveSound, analyzeFenToCp, gradeMove, moveToUci]);
+  }, [rules.opponent, rules.time, thinking, buildPosition, fen, currentTurn, playerColor, playMoveSound, analyzeFenToCp, gradeMove, moveToUci]);
 
   const newGame = useCallback(() => {
     setPlayHistory([]);
@@ -512,7 +481,15 @@ function HomeInner() {
     setPgn("");
     setPendingPromotion(null);
     setThinking(false);
-  }, []);
+    // Reset timers to initial values for timed modes
+    if (rules.time) {
+      setWhiteMs(rules.time.whiteMs);
+      setBlackMs(rules.time.blackMs);
+      timeoutHandledRef.current = false;
+    } else {
+      setWhiteMs(0); setBlackMs(0); timeoutHandledRef.current = false;
+    }
+  }, [rules.time]);
 
   // Forfeit: declare immediate result and send report
   const forfeit = useCallback((winner: 'white'|'black') => {
@@ -521,6 +498,7 @@ function HomeInner() {
     const result = winner === 'white' ? '1-0' : '0-1';
     const run = async () => {
       try {
+        if (lastGameFens.length === 0 || lastGameSans.length === 0) return;
         await fetch('/api/report/generate', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ fens: lastGameFens, sans: lastGameSans, depth, elo, result })
@@ -530,24 +508,103 @@ function HomeInner() {
     void run();
   }, [lastGameFens, lastGameSans, depth, elo]);
 
-  // Auto-trigger engine move only when it's the engine's turn
+  // Timers
+  const [whiteMs, setWhiteMs] = useState<number>(0);
+  const [blackMs, setBlackMs] = useState<number>(0);
+  const timeoutHandledRef = useRef(false);
+  const timersInitializedRef = useRef(false);
+  const rafIdRef = useRef<number | null>(null);
   useEffect(() => {
-    if (playMode !== 'engine' && playMode !== 'engveng') return;
-    if (engineOk === false) return;
-    if (thinking) return;
-    if (playMode === 'engine') {
-      if (currentTurn !== playerColor) {
-        void engineReply();
+    if (rules.time) {
+      setWhiteMs(rules.time.whiteMs);
+      setBlackMs(rules.time.blackMs);
+      timeoutHandledRef.current = false;
+      timersInitializedRef.current = true;
+      // Reset banner state on mode/time change when starting fresh
+      if (lastGameSans.length === 0 && lastGameFens.length === 0) {
+        setShowReviewBanner(false);
+        setGeneratingReport(false);
+        setReportId(null);
+        prevGameOverRef.current = false;
       }
     } else {
-      // Engine vs Engine: always let engine move
-      void engineReply();
+      setWhiteMs(0); setBlackMs(0); timeoutHandledRef.current = false; timersInitializedRef.current = false;
     }
-  }, [fen, currentTurn, playMode, playerColor, thinking, engineOk, engineReply]);
+  }, [rules.time]);
+  const applyIncrement = useCallback((moved: "white"|"black") => {
+    const inc = rules.time?.incrementMs ?? 0;
+    if (inc > 0) {
+      if (moved === 'white') setWhiteMs(ms => ms + inc);
+      else setBlackMs(ms => ms + inc);
+    }
+  }, [rules.time]);
+  useEffect(() => {
+    if (!rules.time) return;
+    if (positionStatus.gameOver) return;
+    let raf = 0;
+    let prev = performance.now();
+    const tick = () => {
+      const now = performance.now();
+      const delta = now - prev; prev = now;
+      // Decrement the clock of the side to move. If UX expects opposite, invert here.
+      if (currentTurn === 'white') setWhiteMs(ms => Math.max(0, ms - delta));
+      else setBlackMs(ms => Math.max(0, ms - delta));
+      raf = requestAnimationFrame(tick);
+      rafIdRef.current = raf;
+    };
+    raf = requestAnimationFrame(tick);
+    rafIdRef.current = raf;
+    return () => { try { if (rafIdRef.current != null) cancelAnimationFrame(rafIdRef.current); } catch {} };
+  }, [rules.time, currentTurn, positionStatus.gameOver]);
+  useEffect(() => {
+    if (!rules.time) return;
+    if (!timersInitializedRef.current) return;
+    if (positionStatus.gameOver) return;
+    // Don't auto-forfeit before any move has been made
+    if (lastGameSans.length === 0 && lastGameFens.length === 0) return;
+    if (!timeoutHandledRef.current) {
+      if (whiteMs <= 0) { timeoutHandledRef.current = true; forfeit('black'); }
+      else if (blackMs <= 0) { timeoutHandledRef.current = true; forfeit('white'); }
+    }
+  }, [whiteMs, blackMs, rules.time, positionStatus.gameOver, forfeit, lastGameSans.length, lastGameFens.length]);
+
+  // Explicitly stop clock when the game ends (e.g., resignation/forfeit without checkmate position)
+  useEffect(() => {
+    if (positionStatus.gameOver) {
+      try { if (rafIdRef.current != null) cancelAnimationFrame(rafIdRef.current); } catch {}
+    }
+  }, [positionStatus.gameOver]);
+
+  // Auto-trigger engine move only when it's the engine's turn
+  const shouldEngineMoveNow = useMemo(() => {
+    const { opponent, time } = composePolicies({ opponent: rules.opponent, time: rules.time ?? null });
+    // Engine should move only if opponent policy says so
+    if (!opponent.shouldEngineMove({ turn: currentTurn, playerColor })) return false;
+    // Additionally, for human vs engine, only let engine move after human has made at least one move when human starts
+    if (rules.opponent === 'engine' && playerColor === 'white' && currentTurn === 'black') {
+      // If no human move yet, prevent engine from moving first in blitz
+      if (lastGameSans.length === 0) return false;
+    }
+    if (engineOk === false) return false;
+    if (thinking) return false;
+    if (time.hasTime && (currentTurn === 'white' ? whiteMs <= 0 : blackMs <= 0)) return false;
+    return true;
+  }, [rules.opponent, rules.time, currentTurn, playerColor, engineOk, thinking, whiteMs, blackMs, lastGameSans.length]);
+  // Deferred effect to avoid use-before-declare of engineReply
+  useEffect(() => {
+    if (!shouldEngineMoveNow) return;
+    // call via microtask to ensure engineReply closure is established
+    Promise.resolve().then(() => { try { void engineReply(); } catch {} });
+  }, [shouldEngineMoveNow]);
 
   // Detect game over transition to trigger review banner and async report generation
   useEffect(() => {
     if (positionStatus.gameOver && !prevGameOverRef.current) {
+      // Only generate a report if we actually have moves to report
+      if (lastGameSans.length === 0 || lastGameFens.length === 0) {
+        prevGameOverRef.current = positionStatus.gameOver;
+        return;
+      }
       setShowReviewBanner(true);
       setGeneratingReport(true);
       setReportId(null);
@@ -589,6 +646,25 @@ function HomeInner() {
       return h.slice(0, - 2);
     });
   }, []);
+
+  // Debugging helper for Blitz
+  const debugBlitz = useCallback(() => {
+    if (modeId !== 'timedBlitz') return;
+    const composed = composePolicies({ opponent: rules.opponent, time: rules.time ?? null, assistance: rules.assistance ?? null, engine: rules.engine ?? null, constraints: rules.constraints ?? null });
+    const shouldMove = composed.opponent.shouldEngineMove({ turn: currentTurn, playerColor });
+    // eslint-disable-next-line no-console
+    console.debug('timedBlitz debug', {
+      modeId,
+      rules,
+      currentTurn,
+      timers: { whiteMs, blackMs },
+      timePolicy: composed.time,
+      engineOk,
+      thinking,
+      positionStatus,
+      shouldEngineMove: shouldMove,
+    });
+  }, [modeId, rules, currentTurn, playerColor, whiteMs, blackMs, engineOk, thinking, positionStatus]);
 
   const completePromotion = useCallback((role: Role) => {
     if (!pendingPromotion) return;
@@ -635,6 +711,47 @@ function HomeInner() {
     else if (difficulty === 'hard') setDepth(18);
   }, [difficulty]);
 
+  const engineReply = useCallback(async () => {
+    if (thinking) return;
+    setThinking(true);
+    try {
+      const { time } = composePolicies({ opponent: rules.opponent, time: rules.time ?? null });
+      if (time.hasTime && (currentTurn === 'white' ? whiteMs <= 0 : blackMs <= 0)) return;
+      if (positionStatus.gameOver) return;
+      const fenForEngine = fen === "startpos" ? startFen : fen;
+      const res = await fetch("/api/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fen: fenForEngine, depth, elo: elo ?? undefined, limitStrength: elo != null }) });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setErrorMsg(`Engine error: ${err?.error || res.status}`);
+        return;
+      }
+      const movedSide: 'white'|'black' = currentTurn;
+      const json = await res.json();
+      const uci: string | undefined = json?.bestmove;
+      if (!uci) return;
+      const nextFen = applyMoveUci(fenForEngine, uci);
+      if (!nextFen) return;
+      setPlayHistory(h => [...h, fen]);
+      setFen(nextFen);
+      const mv = parseUci(uci) as Move | undefined;
+      if (mv && isNormal(mv)) {
+        setLastMove({ from: squareToName(mv.from), to: squareToName(mv.to) });
+        const setupRes = parseFen(fenForEngine);
+        if (setupRes.isOk) {
+          const resPos = setupPosition("chess", setupRes.unwrap());
+          if (resPos.isOk) setLastGameSans(arr => [...arr, makeSan(resPos.unwrap(), mv)]);
+        }
+      }
+      void (async () => { const graded = await gradeMove(fenForEngine, uci); if (graded) { setLastTag(graded.tag); setLastCpl(graded.cpl); } })();
+      const cp = await analyzeFenToCp(nextFen); if (cp !== null) setCurrentCp(cp);
+      playMoveSound();
+      applyIncrement(movedSide);
+      setLastGameFens(arr => [...arr, nextFen]);
+    } finally {
+      setThinking(false);
+    }
+  }, [thinking, rules.opponent, rules.time, currentTurn, whiteMs, blackMs, positionStatus.gameOver, fen, startFen, depth, elo, applyMoveUci, squareToName, gradeMove, analyzeFenToCp, playMoveSound, applyIncrement, setErrorMsg]);
+
   return (
     <div className="min-h-screen p-6 max-w-5xl mx-auto">
       <h1 className="text-2xl font-semibold mb-4">Chess Analyzer</h1>
@@ -647,7 +764,21 @@ function HomeInner() {
           </div>
           {/* Board */}
           <div>
-            <Chessboard options={{ position: fen === "startpos" ? undefined : fen, allowDragging: (playMode !== 'off' && playMode !== 'engveng' && !thinking && !positionStatus.gameOver), squareStyles, onPieceDrop: ({ sourceSquare, targetSquare }) => onPieceDrop({ sourceSquare, targetSquare: targetSquare || sourceSquare }) }} />
+            <Chessboard options={{
+              position: fen === "startpos" ? undefined : fen,
+              allowDragging: (
+                rules.opponent !== 'enginevengine' &&
+                !thinking &&
+                !positionStatus.gameOver &&
+                (rules.opponent !== 'engine' || currentTurn === playerColor)
+              ),
+              squareStyles,
+              onPieceDrop: ({ sourceSquare, targetSquare }) => onPieceDrop({ sourceSquare, targetSquare: targetSquare || sourceSquare }),
+              boardOrientation: orientation,
+            }} />
+            <div className="mt-2 flex gap-2">
+              <button className="px-2 py-1 rounded border" onClick={() => setOrientation((o: 'white'|'black') => o === 'white' ? 'black' : 'white')}>Flip board</button>
+            </div>
             {positionStatus.gameOver && (
               <div className="mt-2 text-sm font-semibold text-red-600">{positionStatus.outcomeText}</div>
             )}
@@ -752,32 +883,40 @@ function HomeInner() {
             <button className="px-3 py-2 rounded bg-black text-white disabled:opacity-50" onClick={handleAnalyzeServer} disabled={!isFenValid || loading}>{loading ? 'Analyzing…' : 'Analyze (Server)'}</button>
             <button className="px-3 py-2 rounded bg-gray-200 disabled:opacity-50" onClick={handleSave} disabled={saving || moves.length===0 || series.length===0}>{saving ? 'Saving…' : 'Save Analysis'}</button>
             <button className="px-3 py-2 rounded bg-gray-200" onClick={testEngine}>Test Engine</button>
+            <button className="px-3 py-2 rounded bg-gray-200" onClick={debugBlitz} disabled={modeId!== 'timedBlitz'}>Debug Blitz</button>
             {engineOk === true && <span className="text-xs text-green-600">Engine OK{engineReqId ? ` (${engineReqId})` : ''}</span>}
             {engineOk === false && <span className="text-xs text-red-600">Engine NOT READY{engineReqId ? ` (${engineReqId})` : ''}</span>}
-            <select className="border rounded px-2 py-1 text-sm" value={playMode} onChange={(e)=>{
-              const v = e.target.value;
-              if (v === 'off' || v === 'engine' || v === 'hotseat' || v === 'engveng') setPlayMode(v as 'off'|'engine'|'hotseat'|'engveng');
+            <select className="border rounded px-2 py-1 text-sm" value={modeId} onChange={(e)=>{
+              const v = e.target.value as GameModeId;
+              setModeId(v);
             }}>
-              <option value="off">Player mode: off</option>
-              <option value="engine">Play vs Engine</option>
-              <option value="hotseat">Two-player (local)</option>
-              <option value="engveng">Engine vs Engine</option>
+              <option value="hotseat">Hotseat</option>
+              <option value="engine">Vs Engine</option>
+              <option value="enginevengine">Engine vs Engine</option>
+              <option value="timedBlitz">Blitz 5+0</option>
+              <option value="puzzle">Puzzle</option>
+              <option value="openingTrainer">Opening Trainer</option>
             </select>
             <select className="border rounded px-2 py-1 text-sm" value={playerColor} onChange={(e)=>{
               const v = e.target.value;
               if (v === 'white' || v === 'black') setPlayerColor(v);
-            }} disabled={playMode==='off'}>
+            }} disabled={rules.opponent==='enginevengine'}>
               <option value="white">White</option>
               <option value="black">Black</option>
             </select>
-            <button className="px-2 py-1 rounded bg-gray-100" onClick={newGame} disabled={playMode==='off'}>New game</button>
+            <button className="px-2 py-1 rounded bg-gray-100" onClick={newGame}>New game</button>
             {/* Forfeit buttons */}
-            <button className="px-2 py-1 rounded bg-red-100 text-red-700" onClick={() => forfeit('white')} disabled={playMode==='off'}>Forfeit (White wins)</button>
-            <button className="px-2 py-1 rounded bg-red-100 text-red-700" onClick={() => forfeit('black')} disabled={playMode==='off'}>Forfeit (Black wins)</button>
+            <button className="px-2 py-1 rounded bg-red-100 text-red-700" onClick={() => forfeit('white')}>Forfeit (White wins)</button>
+            <button className="px-2 py-1 rounded bg-red-100 text-red-700" onClick={() => forfeit('black')}>Forfeit (Black wins)</button>
             <button className="px-2 py-1 rounded bg-gray-100" onClick={undo} disabled={playHistory.length===0}>Undo</button>
-            {playMode==='engine' && <button className="px-2 py-1 rounded bg-gray-100" onClick={undoEngine} disabled={playHistory.length<2}>Undo 2</button>}
+            {rules.opponent==='engine' && <button className="px-2 py-1 rounded bg-gray-100" onClick={undoEngine} disabled={playHistory.length<2}>Undo 2</button>}
             {thinking && <span className="text-xs text-gray-500">Engine thinking…</span>}
           </div>
+          {rules.time && (
+            <div className="mt-2">
+              <Clock whiteMs={whiteMs} blackMs={blackMs} active={positionStatus.gameOver ? null : currentTurn} />
+            </div>
+          )}
           {errorMsg && (
             <div className="text-sm text-red-600">{errorMsg}</div>
           )}

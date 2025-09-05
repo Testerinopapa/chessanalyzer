@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { EnginePool } from "@/lib/enginePool";
 import { prisma } from "@/lib/db";
 import { parseFen, makeFen } from "chessops/fen";
-import { setupPosition } from "chessops/variant";
+import { setupPosition, defaultPosition } from "chessops/variant";
 import { parseSan } from "chessops/san";
 import type { Move, Role } from "chessops";
 import { isNormal } from "chessops";
@@ -79,7 +79,7 @@ export async function POST(req: NextRequest) {
     // Fallback: naive SAN tokenization if structured PGN parse failed
     if (!parsedOk) {
       try {
-        const startPos = body.startFen ? parseFen(body.startFen).unwrap() : defaultPosition("chess");
+        const startPos = body.startFen ? parseFen(body.startFen).unwrap() : defaultPosition("chess").toSetup();
         // strip headers and results, comments and NAGs
         const cleaned = raw
           .replace(/\{[^}]*\}/g, ' ')  // comments
