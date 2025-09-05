@@ -45,4 +45,16 @@ model Puzzle {
   @@index([createdAt])
 }
 
+model PuzzleAttempt {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  puzzleId  String
+  timeMs    Int
+  mistakes  Int
+  solved    Boolean
+  rating    Int?
+
+  @@index([puzzleId, createdAt])
+}
+
 
