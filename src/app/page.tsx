@@ -15,6 +15,8 @@ import { GAME_MODES_PRESETS } from "@/types/gameModes";
 // (reserved for future use) import { getEngineParams, shouldEngineMove } from "@/lib/gameRules";
 import { Clock } from "@/components/Clock";
 import { composePolicies } from "@/lib/policies";
+import { Card } from "@/components/ui/Card";
+import { Button } from "@/components/ui/Button";
 
 const Chessboard = dynamic(() => import("react-chessboard").then(m => m.Chessboard), { ssr: false });
 
@@ -753,10 +755,10 @@ function HomeInner() {
   }, [thinking, rules.opponent, rules.time, currentTurn, whiteMs, blackMs, positionStatus.gameOver, fen, startFen, depth, elo, applyMoveUci, squareToName, gradeMove, analyzeFenToCp, playMoveSound, applyIncrement, setErrorMsg]);
 
   return (
-    <div className="min-h-screen p-6 max-w-5xl mx-auto">
+    <div className="min-h-screen p-6 max-w-6xl mx-auto">
       <h1 className="text-2xl font-semibold mb-4">Chess Analyzer</h1>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
-        <div className="w-full max-w-[480px] flex gap-3 items-start">
+        <div className="w-full max-w-[520px] flex gap-3 items-start">
           {/* Minimalist eval bar on the LEFT */}
           <div className="w-8 h-[384px] md:h-[480px] border rounded overflow-hidden flex flex-col">
             <div style={{ backgroundColor: 'var(--eval-white)', height: `${cpToWhitePercent(whiteCp)}%`, transition: 'height 0.4s ease-in-out' }} />
@@ -777,7 +779,10 @@ function HomeInner() {
               boardOrientation: orientation,
             }} />
             <div className="mt-2 flex gap-2">
-              <button className="px-2 py-1 rounded border" onClick={() => setOrientation((o: 'white'|'black') => o === 'white' ? 'black' : 'white')}>Flip board</button>
+              <Button onClick={() => setOrientation((o: 'white'|'black') => o === 'white' ? 'black' : 'white')}>Flip board</Button>
+              <Button onClick={undo} disabled={playHistory.length===0}>Undo</Button>
+              {rules.opponent==='engine' && <Button onClick={undoEngine} disabled={playHistory.length<2}>Undo 2</Button>}
+              <Button onClick={newGame}>New game</Button>
             </div>
             {positionStatus.gameOver && (
               <div className="mt-2 text-sm font-semibold text-red-600">{positionStatus.outcomeText}</div>
@@ -800,25 +805,26 @@ function HomeInner() {
           </div>
         </div>
         <div className="space-y-4">
-          <label className="block text-sm font-medium">FEN</label>
-          <input className="w-full border rounded px-3 py-2 text-sm" value={fen} onChange={(e) => setFen(e.target.value)} placeholder="startpos or FEN" />
-          <div>
-            <label className="block text-sm font-medium">PGN</label>
+          <Card title="Position">
+            <label className="block text-sm font-medium">FEN</label>
+            <input className="w-full border rounded px-3 py-2 text-sm" value={fen} onChange={(e) => setFen(e.target.value)} placeholder="startpos or FEN" />
+          </Card>
+          <Card title="PGN">
             <textarea className="w-full h-28 border rounded px-3 py-2 text-sm" value={pgn} onChange={(e) => setPgn(e.target.value)} placeholder="Paste PGN here" />
             <div className="mt-2 flex items-center gap-2">
-              <button className="px-3 py-2 rounded bg-gray-200" onClick={handleParsePgn}>Load PGN</button>
+              <Button onClick={handleParsePgn}>Load PGN</Button>
               {moves.length > 0 && (
                 <>
                   <span className="text-xs text-gray-500">Moves: {moves.length}</span>
                   <input type="range" min={0} max={moves.length} step={1} value={ply} onChange={(e) => { const v = parseInt(e.target.value); setPly(v); setFen(v === 0 ? "startpos" : moves[v-1].fen); }} className="flex-1" />
-                  <button className="px-3 py-2 rounded bg-black text-white disabled:opacity-50" onClick={handleAnalyzeAll} disabled={analyzingAll}>{analyzingAll ? 'Analyzing…' : 'Analyze All'}</button>
+                  <Button variant="primary" onClick={handleAnalyzeAll} disabled={analyzingAll}>{analyzingAll ? 'Analyzing…' : 'Analyze All'}</Button>
                 </>
               )}
             </div>
             {moves.length > 0 && (
               <div className="text-xs mt-2 max-h-28 overflow-auto border rounded p-2 space-x-2">
                 {moves.map((m, i) => (
-                  <button key={i} className={`px-1 py-0.5 rounded ${i+1===ply? 'bg-black text-white':'bg-gray-100'}`} onClick={() => { setPly(i+1); setFen(m.fen); }}>{i+1}. {m.san}</button>
+                  <Button key={i} className={`px-1 py-0.5 ${i+1===ply? 'bg-black text-white':'bg-gray-100'}`} onClick={() => { setPly(i+1); setFen(m.fen); }}>{i+1}. {m.san}</Button>
                 ))}
               </div>
             )}
@@ -861,8 +867,8 @@ function HomeInner() {
                 )}
               </div>
             )}
-          </div>
-          <div>
+          </Card>
+          <Card title="Engine & Mode">
             <div className="flex items-center gap-2 mb-1">
               <label className="text-sm font-medium">Depth: {depth}</label>
               <select className="border rounded px-2 py-1 text-sm" value={difficulty} onChange={(e)=>{ const v = e.target.value; if (v==='custom'||v==='easy'||v==='medium'||v==='hard') setDifficulty(v); }}>
@@ -878,40 +884,45 @@ function HomeInner() {
               <input type="number" className="border rounded px-2 py-1 text-sm w-24" min={1350} max={2850} step={50} value={elo ?? ''} onChange={(e)=>{ const v = e.target.value === '' ? null : Math.max(1350, Math.min(2850, parseInt(e.target.value)||1350)); setElo(v); }} placeholder="off" />
               <span className="text-xs text-gray-500">(1350–2850; blank = off)</span>
             </div>
-          </div>
-          <div className="flex flex-wrap gap-2 items-center">
-            <button className="px-3 py-2 rounded bg-black text-white disabled:opacity-50" onClick={handleAnalyzeServer} disabled={!isFenValid || loading}>{loading ? 'Analyzing…' : 'Analyze (Server)'}</button>
-            <button className="px-3 py-2 rounded bg-gray-200 disabled:opacity-50" onClick={handleSave} disabled={saving || moves.length===0 || series.length===0}>{saving ? 'Saving…' : 'Save Analysis'}</button>
-            <button className="px-3 py-2 rounded bg-gray-200" onClick={testEngine}>Test Engine</button>
-            <button className="px-3 py-2 rounded bg-gray-200" onClick={debugBlitz} disabled={modeId!== 'timedBlitz'}>Debug Blitz</button>
-            {engineOk === true && <span className="text-xs text-green-600">Engine OK{engineReqId ? ` (${engineReqId})` : ''}</span>}
-            {engineOk === false && <span className="text-xs text-red-600">Engine NOT READY{engineReqId ? ` (${engineReqId})` : ''}</span>}
-            <select className="border rounded px-2 py-1 text-sm" value={modeId} onChange={(e)=>{
-              const v = e.target.value as GameModeId;
-              setModeId(v);
-            }}>
-              <option value="hotseat">Hotseat</option>
-              <option value="engine">Vs Engine</option>
-              <option value="enginevengine">Engine vs Engine</option>
-              <option value="timedBlitz">Blitz 5+0</option>
-              <option value="puzzle">Puzzle</option>
-              <option value="openingTrainer">Opening Trainer</option>
-            </select>
-            <select className="border rounded px-2 py-1 text-sm" value={playerColor} onChange={(e)=>{
-              const v = e.target.value;
-              if (v === 'white' || v === 'black') setPlayerColor(v);
-            }} disabled={rules.opponent==='enginevengine'}>
-              <option value="white">White</option>
-              <option value="black">Black</option>
-            </select>
-            <button className="px-2 py-1 rounded bg-gray-100" onClick={newGame}>New game</button>
-            {/* Forfeit buttons */}
-            <button className="px-2 py-1 rounded bg-red-100 text-red-700" onClick={() => forfeit('white')}>Forfeit (White wins)</button>
-            <button className="px-2 py-1 rounded bg-red-100 text-red-700" onClick={() => forfeit('black')}>Forfeit (Black wins)</button>
-            <button className="px-2 py-1 rounded bg-gray-100" onClick={undo} disabled={playHistory.length===0}>Undo</button>
-            {rules.opponent==='engine' && <button className="px-2 py-1 rounded bg-gray-100" onClick={undoEngine} disabled={playHistory.length<2}>Undo 2</button>}
-            {thinking && <span className="text-xs text-gray-500">Engine thinking…</span>}
-          </div>
+            <div className="flex flex-wrap gap-2 items-center mt-2">
+              <Button variant="primary" onClick={handleAnalyzeServer} disabled={!isFenValid || loading}>{loading ? 'Analyzing…' : 'Analyze (Server)'}</Button>
+              <Button onClick={handleSave} disabled={saving || moves.length===0 || series.length===0}>{saving ? 'Saving…' : 'Save Analysis'}</Button>
+              <Button onClick={testEngine}>Test Engine</Button>
+              <Button onClick={debugBlitz} disabled={modeId!== 'timedBlitz'}>Debug Blitz</Button>
+              {engineOk === true && <span className="text-xs text-green-600">Engine OK{engineReqId ? ` (${engineReqId})` : ''}</span>}
+              {engineOk === false && <span className="text-xs text-red-600">Engine NOT READY{engineReqId ? ` (${engineReqId})` : ''}</span>}
+              <select className="border rounded px-2 py-1 text-sm" value={modeId} onChange={(e)=>{
+                const v = e.target.value as GameModeId;
+                setModeId(v);
+              }}>
+                <option value="hotseat">Hotseat</option>
+                <option value="engine">Vs Engine</option>
+                <option value="enginevengine">Engine vs Engine</option>
+                <option value="timedBlitz">Blitz 5+0</option>
+                <option value="puzzle">Puzzle</option>
+                <option value="openingTrainer">Opening Trainer</option>
+              </select>
+              <select className="border rounded px-2 py-1 text-sm" value={playerColor} onChange={(e)=>{
+                const v = e.target.value;
+                if (v === 'white' || v === 'black') setPlayerColor(v);
+              }} disabled={rules.opponent==='enginevengine'}>
+                <option value="white">White</option>
+                <option value="black">Black</option>
+              </select>
+              {thinking && <span className="text-xs text-gray-500">Engine thinking…</span>}
+            </div>
+          </Card>
+          <Card title="Analysis output">
+            <div className="text-sm">
+              <span className="font-semibold">Best move:</span> {bestMove ?? "—"}
+            </div>
+            <div className="text-sm">
+              <span className="font-semibold">Score:</span> {score ?? "—"}
+            </div>
+            <div className="text-sm break-words">
+              <span className="font-semibold">PV:</span> {pv ?? "—"}
+            </div>
+          </Card>
           {rules.time && (
             <div className="mt-2">
               <Clock whiteMs={whiteMs} blackMs={blackMs} active={positionStatus.gameOver ? null : currentTurn} />
@@ -933,27 +944,28 @@ function HomeInner() {
       </div>
       {history.length > 0 && (
         <div className="mt-8">
-          <h2 className="text-lg font-semibold mb-2">History</h2>
-          <div className="space-y-2">
-            {history.map((h) => (
-              <div key={h.id} className="border rounded p-2 text-sm flex items-center justify-between">
-                <div className="truncate mr-2">{new Date(h.createdAt).toLocaleString()} • depth {h.depth} • plies {h.ply}</div>
-                <button className="px-2 py-1 rounded bg-gray-100" onClick={() => {
-                  setPgn(h.pgn);
-                  setDepth(h.depth);
-                  setPly(h.ply);
-                  try {
-                    const fens: string[] = JSON.parse(h.fens);
-                    const sans: string[] = JSON.parse(h.sans);
-                    setMoves(sans.map((san: string, i: number) => ({ san, fen: fens[i] })));
-                    const s: number[] = JSON.parse(h.series);
-                    setSeries(s);
-                    setFen(h.ply === 0 ? 'startpos' : fens[h.ply-1] || 'startpos');
-                  } catch {}
-                }}>Load</button>
-              </div>
-            ))}
-          </div>
+          <Card title="History">
+            <div className="space-y-2">
+              {history.map((h) => (
+                <div key={h.id} className="border rounded p-2 text-sm flex items-center justify-between">
+                  <div className="truncate mr-2">{new Date(h.createdAt).toLocaleString()} • depth {h.depth} • plies {h.ply}</div>
+                  <Button onClick={() => {
+                    setPgn(h.pgn);
+                    setDepth(h.depth);
+                    setPly(h.ply);
+                    try {
+                      const fens: string[] = JSON.parse(h.fens);
+                      const sans: string[] = JSON.parse(h.sans);
+                      setMoves(sans.map((san: string, i: number) => ({ san, fen: fens[i] })));
+                      const s: number[] = JSON.parse(h.series);
+                      setSeries(s);
+                      setFen(h.ply === 0 ? 'startpos' : fens[h.ply-1] || 'startpos');
+                    } catch {}
+                  }}>Load</Button>
+                </div>
+              ))}
+            </div>
+          </Card>
         </div>
       )}
     </div>

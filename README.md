@@ -1,6 +1,8 @@
-ChessAnalyzer is a Next.js + TypeScript app for analyzing chess games with Stockfish, CAPS1‑style grading, and a clean UI. It supports analyzing locally played games and PGN imports, with post‑match reports, blunder detection, and opening book integration.
+# ♟️ ChessAnalyzer — Play, Analyze, and Review with Flair ✨
 
-## Getting Started
+ChessAnalyzer is a modern Next.js + TypeScript app for analyzing chess games with Stockfish. It features CAPS1‑style grading, engaging UI, per‑move annotations, and shareable post‑match reports. Analyze live games you play in the app or import PGNs with a click. 💡
+
+## 🚀 Getting Started
 
 First, run the development server:
 
@@ -14,17 +16,19 @@ pnpm dev
 bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000) with your browser to see the app.
 
-### Engine
+### 🧠 Engine
 
-Install Stockfish on your system (CI uses `apt-get install stockfish`). The app auto‑detects `STOCKFISH_PATH` or common locations. Logs are written to `logs/app.log`.
+Install Stockfish on your system (CI uses `apt-get install stockfish`). The app auto‑detects `STOCKFISH_PATH` or common locations. Logs are written to `logs/app.log`. 🔧🗂️
 
-### Database
+### 💾 Database
 
 Development uses SQLite (`prisma/dev.db`). Ensure `DATABASE_URL="file:./prisma/dev.db"` in `.env`.
 
-### Commands
+Optional: For production, you can point Prisma to Postgres by setting `DATABASE_URL` accordingly.
+
+### 🧰 Commands
 
 - `npm run dev`: start dev server
 - `npm run build`: build
@@ -32,16 +36,18 @@ Development uses SQLite (`prisma/dev.db`). Ensure `DATABASE_URL="file:./prisma/d
 - `npm run test:caps1`: run CAPS1 smoke/snapshot tests
 - `npm run test:caps1:stability`: run stability checks (variance ≤ 3%)
 
-## Features
+## ✨ Features
 
-- CAPS1‑style grading: mate‑aware CPL, tags (Best..Blunder), engine agreement, only‑move detection
-- Per‑move symbols/notes (!!, ??, etc.) and PVs in the report
-- Aggregates: ACPL/accuracy per side and per phase (opening/middlegame/endgame)
-- Opening book: local JSON book for early plies; `/api/opening` endpoint
-- Analyze via PGN or locally played games; supports forced results (forfeit)
-- Dark mode with theme toggle; improved annotated moves UI
+- CAPS1‑style grading: mate‑aware CPL, tags (Best→Blunder), engine agreement, only‑move detection 🧮
+- Per‑move symbols/notes (!!, ?, ?!, ??) and PVs in detailed reports 📝
+- Aggregates: ACPL/accuracy per side and by phase (opening/middlegame/endgame) 📊
+- Opening book integration for early plies via `/api/opening` 📚
+- Analyze via PGN imports or games played in‑app; supports forfeits and timed modes ⏱️
+- Dark mode with theme toggle and clean, accessible UI 🌗
+- Puzzle mode with difficulty/motif filters and hinting 🧩
+- Health check for engine availability ✅
 
-## API
+## 🔌 API Endpoints
 
 - `POST /api/analyze` → { bestmove, info, book? }
   - Body: `{ fen, depth?, elo?, limitStrength?, multiPv? }`
@@ -49,29 +55,40 @@ Development uses SQLite (`prisma/dev.db`). Ensure `DATABASE_URL="file:./prisma/d
   - Body: `{ fens?, sans?, pgn?, startFen?, depth?, elo?, multiPv?, result? }`
 - `GET /api/report/latest` → latest saved report
 - `GET /api/report/latest/details` → CAPS1 per‑move + aggregates
+- `GET /api/report/[id]` → fetch report by id
+- `GET /api/analyses` | `POST /api/analyses` → saved analyses (graphs)
+- `GET /api/puzzles` | `GET /api/puzzles/random` | `POST /api/puzzles/attempt`
 - `GET /api/opening?fen=...` → opening book entry
+- `GET /api/health/engine` → engine health
 
-## CI
+See `src/app/api/**` for full handlers.
 
-GitHub Actions runs lint/build and CAPS1 tests on push/PR (`.github/workflows/ci.yml`).
+## 🧱 Tech Stack
+- Next.js 15 (App Router) + React 19 ⚛️
+- TypeScript 🧷
+- Tailwind CSS v4 (custom CSS variables for themes) 🎨
+- Prisma ORM + SQLite (dev) / Postgres (optional prod) 🗄️
+- Stockfish (external engine) ♟️
+- chessops, react‑chessboard libraries
 
-## License
+## 🖥️ UI Highlights
+- Sticky header with navigation and theme toggle
+- Card‑based layout for clarity; accessible focus states
+- Eval bar and interactive graphs with click‑to‑scrub
+- Annotated move list with severity badges and symbols
+
+## 🔄 CI
+
+GitHub Actions runs lint/build and CAPS1 tests on push/PR (`.github/workflows/ci.yml`). 🧪
+
+## 📄 License
 
 MIT
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font).
 
-## Learn More
+## 🙌 Contributing
+PRs welcome! Please run `npm run lint` and ensure tests pass. Open an issue for ideas/bugs/enhancements.
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## 🧾 Logging
+Application logs are written to `logs/` (e.g., `logs/app.log`) and include engine health and analysis traces.
