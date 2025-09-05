@@ -48,3 +48,7 @@ lichess_db_*.pgn.zst
 /prisma/*.db
 /prisma/*.sqlite
 /prisma/*.sqlite-journal
+
+# Large local datasets
+*.zst
+*.zst:Zone.Identifier
