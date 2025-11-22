@@ -12,6 +12,9 @@
     "preview:lichess": "tsx scripts/preview_lichess.ts",
     "puzzle:mine": "tsx scripts/puzzle_miner.ts",
     "puzzle:import": "tsx scripts/puzzle_import_csv.ts",
+    "puzzle:crawl": "tsx scripts/puzzle_crawler.ts",
+    "motifs:check": "tsx scripts/check_motifs.ts",
+    "motifs:test": "tsx scripts/test_motif_search.ts",
     "motifs:group": "tsx scripts/motifs_group.ts"
   },
   "dependencies": {
